@@ -1,0 +1,6 @@
+{
+  "name": "THE MASTER MIND",
+  "description": "Real-time cloud-synced habit controller, anti-doomscroll focus blocker, sleep optimizer, business inventory & analytics hub, voice-to-text daily diary, customizable UI & layouts, and Gemini AI buddy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

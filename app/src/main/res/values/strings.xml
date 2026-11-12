@@ -1,0 +1,26 @@
+<resources>
+    <string name="app_name">THE MASTER MIND</string>
+    <string name="accessibility_service_label">THE MASTER MIND App &amp; Web Guard</string>
+    <string name="accessibility_service_description">Monitors foreground app switches and browser URLs to enforce your daily screen-time limits, deep-work focus sessions, and bedtime app lockouts.</string>
+
+    <string name="auth_title">THE MASTER MIND</string>
+    <string name="auth_subtitle">Master your attention, sync across devices, run your shop, customize every detail, and reflect with Gemini AI.</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="sign_out">Sign out</string>
+
+    <string name="nav_home">Home</string>
+    <string name="nav_shield">Shield</string>
+    <string name="nav_habits">Habits</string>
+    <string name="nav_ops">Ops</string>
+    <string name="nav_diary">Diary</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_support">Developer</string>
+    <string name="nav_profile">Profile</string>
+
+    <string name="lock_title">Focus Shield Active</string>
+    <string name="lock_return_home">Return to THE MASTER MIND</string>
+    <string name="alarm_dismiss">Dismiss Alarm</string>
+    <string name="alarm_snooze">Snooze Reminder</string>
+    <string name="contact_developer_whatsapp">Contact Developer on WhatsApp</string>
+    <string name="developer_whatsapp_number">+254707934241</string>
+</resources>

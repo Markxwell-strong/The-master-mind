@@ -1,0 +1,425 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core helper primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestampsOnCreate(data) {
+      return data.createdAt is timestamp && data.createdAt <= request.time &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTimestampsOnUpdate(data) {
+      return data.createdAt == existing().createdAt &&
+             data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    // --- 1. UserWorkspaceConfig ---
+    function isValidWorkspaceConfig(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.activeDashboardId is string && data.activeDashboardId.size() >= 1 && data.activeDashboardId.size() <= 64 &&
+             data.themePalette is string && data.themePalette.size() >= 1 && data.themePalette.size() <= 40 &&
+             data.darkModePreference in ['system', 'dark', 'light', 'amoled'] &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 80)) &&
+             (!('cardStyle' in data) || data.cardStyle in ['elevated', 'outlined', 'tonal']) &&
+             (!('cornerRadiusDp' in data) || (data.cornerRadiusDp is int && data.cornerRadiusDp >= 0 && data.cornerRadiusDp <= 32)) &&
+             (!('compactDensity' in data) || data.compactDensity is bool) &&
+             (!('appLayoutStyle' in data) || data.appLayoutStyle in ['bento_grid', 'split_carousel', 'compact_tiles', 'editorial_stream']) &&
+             (!('navBarStyle' in data) || data.navBarStyle in ['bottom_bar', 'floating_dock', 'side_rail']) &&
+             (!('partColors' in data) || (
+               data.partColors is map &&
+               data.partColors.size() <= 10 &&
+               data.partColors.keys().hasOnly([
+                 'background', 'surface', 'primary', 'secondary', 'tertiary',
+                 'text', 'mutedText', 'navBar', 'border', 'buttonText'
+               ])
+             )) &&
+             (!('backgroundPreset' in data) || data.backgroundPreset in ['none', 'pulse_nebula', 'custom_photo']) &&
+             (!('backgroundOverlayAlpha' in data) || (data.backgroundOverlayAlpha is number && data.backgroundOverlayAlpha >= 0.05 && data.backgroundOverlayAlpha <= 0.98)) &&
+             (!('cardOpacity' in data) || (data.cardOpacity is number && data.cardOpacity >= 0.35 && data.cardOpacity <= 1.0)) &&
+             (!('enabledWidgets' in data) || (data.enabledWidgets is list && data.enabledWidgets.size() <= 20 && (data.enabledWidgets.size() == 0 || data.enabledWidgets[0] is string))) &&
+             (!('bedtimeHour' in data) || (data.bedtimeHour is int && data.bedtimeHour >= 0 && data.bedtimeHour <= 23)) &&
+             (!('bedtimeMinute' in data) || (data.bedtimeMinute is int && data.bedtimeMinute >= 0 && data.bedtimeMinute <= 59)) &&
+             (!('wakeHour' in data) || (data.wakeHour is int && data.wakeHour >= 0 && data.wakeHour <= 23)) &&
+             (!('wakeMinute' in data) || (data.wakeMinute is int && data.wakeMinute >= 0 && data.wakeMinute <= 59)) &&
+             (!('sleepLockEnabled' in data) || data.sleepLockEnabled is bool) &&
+             (!('deepWorkMinutes' in data) || (data.deepWorkMinutes is int && data.deepWorkMinutes >= 5 && data.deepWorkMinutes <= 480)) &&
+             (!('deepWorkDndEnabled' in data) || data.deepWorkDndEnabled is bool) &&
+             (!('deepWorkActiveUntilMs' in data) || (data.deepWorkActiveUntilMs is int && data.deepWorkActiveUntilMs >= 0)) &&
+             (!('inactivityAlertHours' in data) || (data.inactivityAlertHours is int && data.inactivityAlertHours >= 1 && data.inactivityAlertHours <= 48)) &&
+             (!('inactivityFullScreenAlarm' in data) || data.inactivityFullScreenAlarm is bool) &&
+             (!('aiCoachPersona' in data) || data.aiCoachPersona in ['balanced', 'strict', 'zen', 'business']) &&
+             (!('lastActiveDevice' in data) || (data.lastActiveDevice is string && data.lastActiveDevice.size() <= 100));
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'activeDashboardId', 'themePalette', 'darkModePreference', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'displayName', 'activeDashboardId', 'themePalette', 'darkModePreference',
+                         'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
+                         'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
+                         'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
+                         'deepWorkMinutes', 'deepWorkDndEnabled', 'deepWorkActiveUntilMs',
+                         'inactivityAlertHours', 'inactivityFullScreenAlarm', 'aiCoachPersona',
+                         'lastActiveDevice', 'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidTimestampsOnCreate(incoming()) &&
+                       isValidWorkspaceConfig(incoming());
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidWorkspaceConfig(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       isValidTimestampsOnUpdate(incoming()) &&
+                       incoming().diff(existing()).affectedKeys().hasOnly([
+                         'displayName', 'activeDashboardId', 'themePalette', 'darkModePreference',
+                         'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
+                         'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
+                         'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
+                         'deepWorkMinutes', 'deepWorkDndEnabled', 'deepWorkActiveUntilMs',
+                         'inactivityAlertHours', 'inactivityFullScreenAlarm', 'aiCoachPersona',
+                         'lastActiveDevice', 'updatedAt'
+                       ]);
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // --- 2. AppLimitRule ---
+      function isValidAppRule(data) {
+        return data.userId == userId &&
+               data.packageName is string && data.packageName.size() >= 1 && data.packageName.size() <= 180 &&
+               data.appName is string && data.appName.size() >= 1 && data.appName.size() <= 100 &&
+               data.dailyLimitMinutes is int && data.dailyLimitMinutes >= 1 && data.dailyLimitMinutes <= 1440 &&
+               (!('category' in data) || data.category in ['social', 'video', 'gaming', 'browser', 'other']) &&
+               (!('todayUsedMinutes' in data) || (data.todayUsedMinutes is int && data.todayUsedMinutes >= 0 && data.todayUsedMinutes <= 1440)) &&
+               (!('blockDuringSleep' in data) || data.blockDuringSleep is bool) &&
+               (!('blockDuringDeepWork' in data) || data.blockDuringDeepWork is bool) &&
+               (!('isLocked' in data) || data.isLocked is bool) &&
+               (!('lockedUntilMillis' in data) || (data.lockedUntilMillis is int && data.lockedUntilMillis >= 0));
+      }
+
+      match /appRules/{ruleId} {
+        allow get: if isOwner(userId) && isValidId(ruleId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(ruleId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'packageName', 'appName', 'dailyLimitMinutes', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'packageName', 'appName', 'category', 'dailyLimitMinutes',
+                           'todayUsedMinutes', 'blockDuringSleep', 'blockDuringDeepWork',
+                           'isLocked', 'lockedUntilMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidAppRule(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(ruleId) &&
+                         isValidAppRule(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'packageName', 'appName', 'category', 'dailyLimitMinutes',
+                           'todayUsedMinutes', 'blockDuringSleep', 'blockDuringDeepWork',
+                           'isLocked', 'lockedUntilMillis', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(ruleId);
+      }
+
+      // --- 3. BlockedSite ---
+      function isValidBlockedSite(data) {
+        return data.userId == userId &&
+               data.domain is string && data.domain.size() >= 3 && data.domain.size() <= 150 &&
+               data.label is string && data.label.size() >= 1 && data.label.size() <= 80 &&
+               (!('blockDuringDeepWork' in data) || data.blockDuringDeepWork is bool) &&
+               (!('blockAlways' in data) || data.blockAlways is bool);
+      }
+
+      match /blockedSites/{siteId} {
+        allow get: if isOwner(userId) && isValidId(siteId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(siteId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'domain', 'label', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'domain', 'label', 'blockDuringDeepWork', 'blockAlways',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidBlockedSite(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(siteId) &&
+                         isValidBlockedSite(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'domain', 'label', 'blockDuringDeepWork', 'blockAlways', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(siteId);
+      }
+
+      // --- 4. HabitItem ---
+      function isValidHabit(data) {
+        return data.userId == userId &&
+               data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+               data.category in ['wellness', 'focus', 'sleep', 'business', 'mindset'] &&
+               data.targetPerDay is int && data.targetPerDay >= 1 && data.targetPerDay <= 100 &&
+               (!('completedToday' in data) || (data.completedToday is int && data.completedToday >= 0 && data.completedToday <= 500)) &&
+               (!('streakDays' in data) || (data.streakDays is int && data.streakDays >= 0 && data.streakDays <= 36500)) &&
+               (!('lastCompletedDate' in data) || (data.lastCompletedDate is string && data.lastCompletedDate.size() <= 20)) &&
+               (!('reminderTime' in data) || (data.reminderTime is string && data.reminderTime.size() <= 16));
+      }
+
+      match /habits/{habitId} {
+        allow get: if isOwner(userId) && isValidId(habitId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(habitId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'title', 'category', 'targetPerDay', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'title', 'category', 'targetPerDay', 'completedToday',
+                           'streakDays', 'lastCompletedDate', 'reminderTime', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidHabit(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(habitId) &&
+                         isValidHabit(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'category', 'targetPerDay', 'completedToday',
+                           'streakDays', 'lastCompletedDate', 'reminderTime', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(habitId);
+      }
+
+      // --- 5. NoteItem ---
+      function isValidNote(data) {
+        return data.userId == userId &&
+               data.title is string && data.title.size() >= 1 && data.title.size() <= 160 &&
+               data.content is string && data.content.size() <= 10000 &&
+               data.category in ['note', 'reminder', 'idea', 'work'] &&
+               (!('isPinned' in data) || data.isPinned is bool) &&
+               (!('isCompleted' in data) || data.isCompleted is bool) &&
+               (!('reminderAtMillis' in data) || (data.reminderAtMillis is int && data.reminderAtMillis >= 0));
+      }
+
+      match /notes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(noteId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll(['userId', 'title', 'content', 'category', 'createdAt', 'updatedAt']) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'title', 'content', 'category', 'isPinned',
+                           'isCompleted', 'reminderAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidNote(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(noteId) &&
+                         isValidNote(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'content', 'category', 'isPinned',
+                           'isCompleted', 'reminderAtMillis', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(noteId);
+      }
+
+      // --- 6. InventoryItem ---
+      function isValidInventoryItem(data) {
+        return data.userId == userId &&
+               data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 64 &&
+               data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+               data.stockQty is int && data.stockQty >= 0 && data.stockQty <= 10000000 &&
+               data.lowStockThreshold is int && data.lowStockThreshold >= 0 && data.lowStockThreshold <= 1000000 &&
+               data.unitCost is number && data.unitCost >= 0 && data.unitCost <= 10000000 &&
+               data.unitPrice is number && data.unitPrice >= 0 && data.unitPrice <= 10000000 &&
+               (!('category' in data) || (data.category is string && data.category.size() <= 60)) &&
+               (!('reorderQty' in data) || (data.reorderQty is int && data.reorderQty >= 1 && data.reorderQty <= 1000000)) &&
+               (!('autoReorder' in data) || data.autoReorder is bool) &&
+               (!('unitsSold' in data) || (data.unitsSold is int && data.unitsSold >= 0 && data.unitsSold <= 100000000)) &&
+               (!('supplierName' in data) || (data.supplierName is string && data.supplierName.size() <= 100));
+      }
+
+      match /inventory/{itemId} {
+        allow get: if isOwner(userId) && isValidId(itemId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(itemId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'sku', 'name', 'stockQty', 'lowStockThreshold',
+                           'unitCost', 'unitPrice', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'sku', 'name', 'category', 'stockQty', 'lowStockThreshold',
+                           'reorderQty', 'autoReorder', 'unitCost', 'unitPrice', 'unitsSold',
+                           'supplierName', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidInventoryItem(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(itemId) &&
+                         isValidInventoryItem(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'sku', 'name', 'category', 'stockQty', 'lowStockThreshold',
+                           'reorderQty', 'autoReorder', 'unitCost', 'unitPrice', 'unitsSold',
+                           'supplierName', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(itemId);
+      }
+
+      // --- 7. ReorderRecord ---
+      function isValidReorderRecord(data) {
+        return data.userId == userId &&
+               data.itemId is string && data.itemId.size() >= 1 && data.itemId.size() <= 128 &&
+               data.itemName is string && data.itemName.size() >= 1 && data.itemName.size() <= 120 &&
+               data.sku is string && data.sku.size() >= 1 && data.sku.size() <= 64 &&
+               data.quantity is int && data.quantity >= 1 && data.quantity <= 1000000 &&
+               data.totalCost is number && data.totalCost >= 0 && data.totalCost <= 100000000 &&
+               data.status in ['pending', 'ordered', 'received'] &&
+               (!('supplierName' in data) || (data.supplierName is string && data.supplierName.size() <= 100)) &&
+               (!('isAutoTriggered' in data) || data.isAutoTriggered is bool);
+      }
+
+      match /reorders/{orderId} {
+        allow get: if isOwner(userId) && isValidId(orderId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(orderId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'itemId', 'itemName', 'sku', 'quantity',
+                           'totalCost', 'status', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'itemId', 'itemName', 'sku', 'quantity', 'totalCost',
+                           'supplierName', 'status', 'isAutoTriggered', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidReorderRecord(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(orderId) &&
+                         isValidReorderRecord(incoming()) &&
+                         existing().status != 'received' &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(orderId);
+      }
+
+      // --- 8. DiaryEntry ---
+      function isValidDiaryEntry(data) {
+        return data.userId == userId &&
+               data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 20 &&
+               data.activitiesText is string && data.activitiesText.size() <= 10000 &&
+               data.moodScore is int && data.moodScore >= 1 && data.moodScore <= 5 &&
+               data.energyScore is int && data.energyScore >= 1 && data.energyScore <= 5 &&
+               (!('onlineHours' in data) || (data.onlineHours is number && data.onlineHours >= 0 && data.onlineHours <= 24)) &&
+               (!('voiceTranscribed' in data) || data.voiceTranscribed is bool) &&
+               (!('aiScore' in data) || (data.aiScore is int && data.aiScore >= -1 && data.aiScore <= 100)) &&
+               (!('aiFeedback' in data) || (data.aiFeedback is string && data.aiFeedback.size() <= 6000)) &&
+               (!('aiRecommendations' in data) || (data.aiRecommendations is list && data.aiRecommendations.size() <= 10 && (data.aiRecommendations.size() == 0 || data.aiRecommendations[0] is string)));
+      }
+
+      match /diary/{entryId} {
+        allow get: if isOwner(userId) && isValidId(entryId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(entryId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'dateKey', 'activitiesText', 'moodScore', 'energyScore',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'dateKey', 'activitiesText', 'moodScore', 'energyScore',
+                           'onlineHours', 'voiceTranscribed', 'aiScore', 'aiFeedback',
+                           'aiRecommendations', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidDiaryEntry(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(entryId) &&
+                         isValidDiaryEntry(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'activitiesText', 'moodScore', 'energyScore', 'onlineHours',
+                           'voiceTranscribed', 'aiScore', 'aiFeedback', 'aiRecommendations', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(entryId);
+      }
+
+      // --- 9. FocusSession ---
+      function isValidFocusSession(data) {
+        return data.userId == userId &&
+               data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+               data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 720 &&
+               data.mode in ['deep_work', 'pomodoro', 'sleep_lock'] &&
+               data.completed is bool &&
+               (!('distractionsBlocked' in data) || (data.distractionsBlocked is int && data.distractionsBlocked >= 0 && data.distractionsBlocked <= 10000));
+      }
+
+      match /focusSessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'title', 'durationMinutes', 'mode', 'completed',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'title', 'durationMinutes', 'mode', 'completed',
+                           'distractionsBlocked', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidFocusSession(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         isValidFocusSession(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'durationMinutes', 'completed', 'distractionsBlocked', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(sessionId);
+      }
+    }
+  }
+}

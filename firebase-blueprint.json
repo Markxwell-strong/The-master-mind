@@ -1,0 +1,226 @@
+{
+  "entities": {
+    "UserWorkspaceConfig": {
+      "title": "UserWorkspaceConfig",
+      "description": "Synced multi-device user preferences, 15-dashboard customization, sleep schedule, deep-work settings, and inactivity rules",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Authenticated user UID" },
+        "displayName": { "type": "string", "description": "User display name" },
+        "activeDashboardId": { "type": "string", "description": "Selected dashboard preset ID (1 of 15)" },
+        "themePalette": { "type": "string", "description": "Selected accent color palette key" },
+        "darkModePreference": { "type": "string", "enum": ["system", "dark", "light", "amoled"], "description": "Theme brightness mode" },
+        "cardStyle": { "type": "string", "enum": ["elevated", "outlined", "tonal"], "description": "Card visual style" },
+        "cornerRadiusDp": { "type": "integer", "description": "Card corner roundness in dp" },
+        "compactDensity": { "type": "boolean", "description": "Compact UI spacing toggle" },
+        "appLayoutStyle": { "type": "string", "enum": ["bento_grid", "split_carousel", "compact_tiles", "editorial_stream"], "description": "Screen & dashboard layout arrangement" },
+        "navBarStyle": { "type": "string", "enum": ["bottom_bar", "floating_dock", "side_rail"], "description": "Primary navigation shell layout" },
+        "partColors": { "type": "object", "description": "Map of UI part keys (background, surface, primary, secondary, tertiary, text, mutedText, navBar, border, buttonText) to #RRGGBB hex strings" },
+        "backgroundPreset": { "type": "string", "enum": ["none", "pulse_nebula", "custom_photo"], "description": "Whole app background visual source" },
+        "backgroundOverlayAlpha": { "type": "number", "description": "Dimming overlay alpha over background picture" },
+        "cardOpacity": { "type": "number", "description": "Card container alpha transparency" },
+        "enabledWidgets": { "type": "array", "description": "Bounded list of enabled custom dashboard widget keys" },
+        "bedtimeHour": { "type": "integer", "description": "Bedtime alarm hour (0-23)" },
+        "bedtimeMinute": { "type": "integer", "description": "Bedtime alarm minute (0-59)" },
+        "wakeHour": { "type": "integer", "description": "Optimal wake target hour (0-23)" },
+        "wakeMinute": { "type": "integer", "description": "Optimal wake target minute (0-59)" },
+        "sleepLockEnabled": { "type": "boolean", "description": "Whether distracting apps lock until wake time" },
+        "deepWorkMinutes": { "type": "integer", "description": "Default deep-work session length in minutes" },
+        "deepWorkDndEnabled": { "type": "boolean", "description": "Silence non-essential notifications during deep work" },
+        "deepWorkActiveUntilMs": { "type": "integer", "description": "Epoch ms when current deep-work session ends (0 if inactive)" },
+        "inactivityAlertHours": { "type": "integer", "description": "Hours of inactivity before gentle reminder or alarm" },
+        "inactivityFullScreenAlarm": { "type": "boolean", "description": "Use full-screen alarm instead of gentle notification when inactive" },
+        "aiCoachPersona": { "type": "string", "enum": ["balanced", "strict", "zen", "business"], "description": "AI Buddy coaching style" },
+        "lastActiveDevice": { "type": "string", "description": "Name of last synced device" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update" }
+      },
+      "required": ["userId", "activeDashboardId", "themePalette", "darkModePreference", "createdAt", "updatedAt"]
+    },
+    "AppLimitRule": {
+      "title": "AppLimitRule",
+      "description": "Screen-time limit, doomscroll lock, and schedule rule for an installed app",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "packageName": { "type": "string" },
+        "appName": { "type": "string" },
+        "category": { "type": "string", "enum": ["social", "video", "gaming", "browser", "other"] },
+        "dailyLimitMinutes": { "type": "integer" },
+        "todayUsedMinutes": { "type": "integer" },
+        "blockDuringSleep": { "type": "boolean" },
+        "blockDuringDeepWork": { "type": "boolean" },
+        "isLocked": { "type": "boolean" },
+        "lockedUntilMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "packageName", "appName", "dailyLimitMinutes", "createdAt", "updatedAt"]
+    },
+    "BlockedSite": {
+      "title": "BlockedSite",
+      "description": "Distracting website domain blocked during focus gateway or always",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "domain": { "type": "string" },
+        "label": { "type": "string" },
+        "blockDuringDeepWork": { "type": "boolean" },
+        "blockAlways": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "domain", "label", "createdAt", "updatedAt"]
+    },
+    "HabitItem": {
+      "title": "HabitItem",
+      "description": "Daily user habit and streak tracker",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string", "enum": ["wellness", "focus", "sleep", "business", "mindset"] },
+        "targetPerDay": { "type": "integer" },
+        "completedToday": { "type": "integer" },
+        "streakDays": { "type": "integer" },
+        "lastCompletedDate": { "type": "string" },
+        "reminderTime": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "category", "targetPerDay", "createdAt", "updatedAt"]
+    },
+    "NoteItem": {
+      "title": "NoteItem",
+      "description": "Notebook entry or scheduled reminder",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string", "enum": ["note", "reminder", "idea", "work"] },
+        "isPinned": { "type": "boolean" },
+        "isCompleted": { "type": "boolean" },
+        "reminderAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "content", "category", "createdAt", "updatedAt"]
+    },
+    "InventoryItem": {
+      "title": "InventoryItem",
+      "description": "Business/shop inventory SKU with low-stock threshold, auto-reorder, and financial pricing",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "sku": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "stockQty": { "type": "integer" },
+        "lowStockThreshold": { "type": "integer" },
+        "reorderQty": { "type": "integer" },
+        "autoReorder": { "type": "boolean" },
+        "unitCost": { "type": "number" },
+        "unitPrice": { "type": "number" },
+        "unitsSold": { "type": "integer" },
+        "supplierName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "sku", "name", "stockQty", "lowStockThreshold", "unitCost", "unitPrice", "createdAt", "updatedAt"]
+    },
+    "ReorderRecord": {
+      "title": "ReorderRecord",
+      "description": "Automated or manual supplier purchase reorder transaction",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "itemId": { "type": "string" },
+        "itemName": { "type": "string" },
+        "sku": { "type": "string" },
+        "quantity": { "type": "integer" },
+        "totalCost": { "type": "number" },
+        "supplierName": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "ordered", "received"] },
+        "isAutoTriggered": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "itemId", "itemName", "sku", "quantity", "totalCost", "status", "createdAt", "updatedAt"]
+    },
+    "DiaryEntry": {
+      "title": "DiaryEntry",
+      "description": "Daily voice-to-text / written activity journal with AI evaluation and recommendations",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "activitiesText": { "type": "string" },
+        "moodScore": { "type": "integer" },
+        "energyScore": { "type": "integer" },
+        "onlineHours": { "type": "number" },
+        "voiceTranscribed": { "type": "boolean" },
+        "aiScore": { "type": "integer" },
+        "aiFeedback": { "type": "string" },
+        "aiRecommendations": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "activitiesText", "moodScore", "energyScore", "createdAt", "updatedAt"]
+    },
+    "FocusSession": {
+      "title": "FocusSession",
+      "description": "Completed or active deep-work / focus sprint telemetry",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "durationMinutes": { "type": "integer" },
+        "mode": { "type": "string", "enum": ["deep_work", "pomodoro", "sleep_lock"] },
+        "completed": { "type": "boolean" },
+        "distractionsBlocked": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "durationMinutes", "mode", "completed", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserWorkspaceConfig" },
+      "description": "Synced multi-device user preferences, 15-dashboard state, sleep/wake schedule, and deep-work configuration"
+    },
+    "/users/{userId}/appRules/{ruleId}": {
+      "schema": { "$ref": "#/entities/AppLimitRule" },
+      "description": "Per-app screen-time limit and doomscroll lock rules"
+    },
+    "/users/{userId}/blockedSites/{siteId}": {
+      "schema": { "$ref": "#/entities/BlockedSite" },
+      "description": "Blocked distracting websites for Deep-Work Gateway"
+    },
+    "/users/{userId}/habits/{habitId}": {
+      "schema": { "$ref": "#/entities/HabitItem" },
+      "description": "User habits and daily streaks"
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": { "$ref": "#/entities/NoteItem" },
+      "description": "Inclusive notebook entries and scheduled reminders"
+    },
+    "/users/{userId}/inventory/{itemId}": {
+      "schema": { "$ref": "#/entities/InventoryItem" },
+      "description": "Business/shop inventory items and pricing"
+    },
+    "/users/{userId}/reorders/{orderId}": {
+      "schema": { "$ref": "#/entities/ReorderRecord" },
+      "description": "Automated and manual inventory purchase reorders"
+    },
+    "/users/{userId}/diary/{entryId}": {
+      "schema": { "$ref": "#/entities/DiaryEntry" },
+      "description": "Daily voice/text diary entries and Gemini AI evaluations"
+    },
+    "/users/{userId}/focusSessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/FocusSession" },
+      "description": "Focus & deep-work session logs"
+    }
+  }
+}
