@@ -74,11 +74,27 @@ import com.example.ui.viewmodel.UiState
 import java.util.Locale
 import kotlin.math.roundToInt
 
+import android.graphics.Bitmap
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.ui.graphics.Color
+import com.example.system.ProfileMediaStorage
+import com.example.ui.components.GlassCard
+import com.example.ui.components.GlassTopBar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun DiaryAndAiBuddyScreen(viewModel: FocusPulseViewModel) {
+fun DiaryAndAiBuddyScreen(
+    viewModel: FocusPulseViewModel,
+    onOpenProfile: () -> Unit = {},
+    onOpenNotifications: () -> Unit = {}
+) {
     val context = LocalContext.current
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+    val notifications by viewModel.notificationsFeed.collectAsStateWithLifecycle()
+    val profilePhotoRefreshKey by viewModel.profilePhotoRefreshKey.collectAsStateWithLifecycle()
     val diaryEntries by viewModel.diaryEntries.collectAsStateWithLifecycle()
     val aiEvaluating by viewModel.aiEvaluatingDiary.collectAsStateWithLifecycle()
     val aiDiaryError by viewModel.aiDiaryError.collectAsStateWithLifecycle()
@@ -91,6 +107,14 @@ fun DiaryAndAiBuddyScreen(viewModel: FocusPulseViewModel) {
     val todayEntry = remember(diaryEntries, todayKey) {
         diaryEntries.firstOrNull { it.dateKey == todayKey }
     }
+    var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    val uid = viewModel.currentUid
+    LaunchedEffect(profilePhotoRefreshKey, uid) {
+        profileBitmap = withContext(Dispatchers.IO) {
+            ProfileMediaStorage.loadBitmap(context, uid)
+        }
+    }
+    val profileInitial = config.displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "M"
 
     var selectedTab by remember { mutableIntStateOf(0) } // 0 = Voice Diary & Eval, 1 = Gemini AI Buddy
     var activitiesText by remember { mutableStateOf(todayEntry?.activitiesText.orEmpty()) }
@@ -177,10 +201,14 @@ fun DiaryAndAiBuddyScreen(viewModel: FocusPulseViewModel) {
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         item {
-            Text(
-                text = "Voice Diary & AI Buddy",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+            GlassTopBar(
+                title = "Journal & AI Buddy",
+                subtitle = "$todayKey • Voice-to-text reflection & Gemini coaching",
+                profileInitial = profileInitial,
+                profileBitmap = profileBitmap,
+                unreadNotifications = notifications.size,
+                onOpenProfile = onOpenProfile,
+                onOpenNotifications = onOpenNotifications
             )
         }
 
@@ -425,6 +453,7 @@ fun DiaryAndAiBuddyScreen(viewModel: FocusPulseViewModel) {
             }
 
             item {
+                val isBusy = buddyState is AiBuddyUiState.Loading || buddyState is AiBuddyUiState.Streaming
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -446,12 +475,14 @@ fun DiaryAndAiBuddyScreen(viewModel: FocusPulseViewModel) {
                                 viewModel.sendBuddyMessage(prompt)
                             }
                         },
+                        enabled = !isBusy && chatInput.isNotBlank(),
                         modifier = Modifier.testTag("ai_buddy_send_button")
                     ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send to AI Buddy")
                     }
                 }
             }
+            item { Spacer(Modifier.height(72.dp)) }
         }
     }
 }

@@ -5,6 +5,11 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.ai.FocusAiRepository
+import com.example.data.ai.GeminiService
+import com.example.data.ai.SupportTriageResult
+import com.example.data.intelligence.InsightManager
+import com.example.data.intelligence.IntelligencePipelineResult
+import com.example.data.intelligence.IntelligenceRepository
 import com.example.data.model.AppLimitRule
 import com.example.data.model.BlockedSite
 import com.example.data.model.DiaryEntry
@@ -13,15 +18,23 @@ import com.example.data.model.HabitItem
 import com.example.data.model.InventoryItem
 import com.example.data.model.NoteItem
 import com.example.data.model.ReorderRecord
+import com.example.data.model.SupportTicket
 import com.example.data.model.UserWorkspaceConfig
+import com.example.data.preferences.AppearancePreferencesState
+import com.example.data.preferences.AppearancePreferencesStore
+import com.example.data.preferences.SavedThemePreset
+import com.example.data.preferences.WallpaperConfig
 import com.example.data.repository.FocusPulseRepository
+import com.example.system.AccountSecurityHelper
 import com.example.system.AppUsageInfo
 import com.example.system.BatteryTelemetry
 import com.example.system.DeviceTelemetryManager
 import com.example.system.FocusGuardPreferences
+import com.example.system.IntelligenceSyncWorker
 import com.example.system.SleepAlarmScheduler
 import com.example.system.SleepCircadianInsights
 import com.example.system.SystemPermissionsState
+import com.example.system.UsageMonitor
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -33,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -61,19 +75,44 @@ sealed interface AiBuddyUiState {
     data class Error(val message: String) : AiBuddyUiState
 }
 
+sealed interface SupportTriageUiState {
+    data object Idle : SupportTriageUiState
+    data object Loading : SupportTriageUiState
+    data class Diagnosed(
+        val ticketId: String,
+        val result: SupportTriageResult,
+        val deliveredToAdminInbox: Boolean
+    ) : SupportTriageUiState
+    data class Error(val message: String) : SupportTriageUiState
+}
+
 class FocusPulseViewModel(
     application: Application,
     private val repository: FocusPulseRepository,
     private val aiRepository: FocusAiRepository,
     private val currentUserId: String,
-    displayName: String
+    displayName: String,
+    val userEmail: String = ""
 ) : AndroidViewModel(application) {
 
     val currentUid: String get() = currentUserId
+    val isAdminUser: Boolean = AccountSecurityHelper.isAdminEmail(userEmail)
 
     private val telemetryManager = DeviceTelemetryManager(application)
+    private val usageMonitor = UsageMonitor(application)
     private val guardPrefs = FocusGuardPreferences(application)
     private val alarmScheduler = SleepAlarmScheduler(application)
+    private val appearanceStore = AppearancePreferencesStore(application)
+    private val intelligenceRepo = IntelligenceRepository(application)
+    private val geminiService = GeminiService()
+    private val insightManager = InsightManager(usageMonitor, intelligenceRepo, geminiService)
+
+    val appearanceState: StateFlow<AppearancePreferencesState> = appearanceStore.state
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000L),
+            initialValue = AppearancePreferencesState()
+        )
 
     private val _statusBanner = MutableStateFlow<String?>(null)
     val statusBanner: StateFlow<String?> = _statusBanner.asStateFlow()
@@ -134,6 +173,31 @@ class FocusPulseViewModel(
             .catch { Log.w(TAG, "observeFocusSessions error", it); emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
+    val mySupportTickets: StateFlow<List<SupportTicket>> =
+        repository.observeMySupportTickets(currentUserId)
+            .catch { Log.w(TAG, "observeMySupportTickets error", it); emit(emptyList()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val adminSupportTickets: StateFlow<List<SupportTicket>> =
+        if (isAdminUser) {
+            repository.observeAllSupportTicketsForAdmin()
+                .catch { Log.w(TAG, "observeAllSupportTicketsForAdmin error", it); emit(emptyList()) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+        } else {
+            flowOf(emptyList<SupportTicket>())
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+        }
+
+    val adminUsers: StateFlow<List<UserWorkspaceConfig>> =
+        if (isAdminUser) {
+            repository.observeAllUsersForAdmin()
+                .catch { Log.w(TAG, "observeAllUsersForAdmin error", it); emit(emptyList()) }
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+        } else {
+            flowOf(emptyList<UserWorkspaceConfig>())
+                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+        }
+
     // --- Real-Time Device Telemetry ---
     private val _batteryTelemetry = MutableStateFlow(BatteryTelemetry())
     val batteryTelemetry: StateFlow<BatteryTelemetry> = _batteryTelemetry.asStateFlow()
@@ -143,6 +207,12 @@ class FocusPulseViewModel(
 
     private val _permissions = MutableStateFlow(SystemPermissionsState())
     val permissions: StateFlow<SystemPermissionsState> = _permissions.asStateFlow()
+
+    private val _showPermissionsPrompt = MutableStateFlow(false)
+    val showPermissionsPrompt: StateFlow<Boolean> = _showPermissionsPrompt.asStateFlow()
+
+    private val _supportTriageState = MutableStateFlow<SupportTriageUiState>(SupportTriageUiState.Idle)
+    val supportTriageState: StateFlow<SupportTriageUiState> = _supportTriageState.asStateFlow()
 
     private val _stepsToday = MutableStateFlow(0)
     val stepsToday: StateFlow<Int> = _stepsToday.asStateFlow()
@@ -182,16 +252,122 @@ class FocusPulseViewModel(
     private val _buddyState = MutableStateFlow<AiBuddyUiState>(AiBuddyUiState.Idle)
     val buddyState: StateFlow<AiBuddyUiState> = _buddyState.asStateFlow()
 
+    private val _intelligenceState = MutableStateFlow(IntelligenceUiState())
+    val intelligenceState: StateFlow<IntelligenceUiState> = _intelligenceState.asStateFlow()
+
+    private var latestPipelineResult: IntelligencePipelineResult? = null
     private var buddyJob: Job? = null
+    private var intelligenceJob: Job? = null
+
+    val notificationsFeed: StateFlow<List<AppNotificationItem>> = combine(
+        notes,
+        inventory,
+        permissions,
+        _intelligenceState
+    ) { noteList, invList, perms, intel ->
+        buildList {
+            val now = System.currentTimeMillis()
+            noteList.filter { !it.isCompleted && it.reminderAtMillis in 1L..now }.forEach { n ->
+                add(
+                    AppNotificationItem(
+                        id = "overdue_${n.id}",
+                        title = "Overdue Reminder: ${n.title}",
+                        detail = n.content.ifBlank { "Scheduled task reminder is overdue." },
+                        severity = "urgent"
+                    )
+                )
+            }
+            invList.filter { it.isLowStock }.forEach { item ->
+                add(
+                    AppNotificationItem(
+                        id = "stock_${item.id}",
+                        title = "Low Stock: ${item.name}",
+                        detail = "${item.stockQty} units left (threshold ${item.lowStockThreshold}).",
+                        severity = "warning"
+                    )
+                )
+            }
+            if (!perms.usageStatsGranted) {
+                add(
+                    AppNotificationItem(
+                        id = "perm_usage",
+                        title = "Usage Access Needed",
+                        detail = "Enable Android Usage Access in Settings so AI Intelligence can track screen-time shifts.",
+                        severity = "info"
+                    )
+                )
+            }
+            intel.insights.take(3).forEach { ins ->
+                add(
+                    AppNotificationItem(
+                        id = "ins_${ins.id}",
+                        title = ins.title,
+                        detail = ins.summary,
+                        severity = "info"
+                    )
+                )
+            }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
     init {
         viewModelScope.launch {
             repository.ensureWorkspaceConfig(displayName)
         }
         guardPrefs.touchUserActivity()
-        refreshSystemTelemetry()
+        refreshSystemTelemetry(checkOnboardingPrompt = true)
         startSyncBridgeLoop()
         startTickerLoop()
+        observeIntelligenceStreams()
+    }
+
+    private fun observeIntelligenceStreams() {
+        viewModelScope.launch {
+            combine(
+                intelligenceRepo.observePatterns(),
+                intelligenceRepo.observeActiveInsights(),
+                intelligenceRepo.observeMemories(),
+                intelligenceRepo.observeRecentActivities(60),
+                appearanceState
+            ) { pats, ins, mems, acts, appPref ->
+                val st = _intelligenceState.value
+                st.copy(
+                    monitoringEnabled = appPref.monitoringEnabled,
+                    retentionDays = appPref.retentionDays,
+                    patterns = pats,
+                    insights = ins,
+                    memories = mems,
+                    recentActivities = acts
+                )
+            }.collect { next ->
+                _intelligenceState.value = next
+            }
+        }
+
+        viewModelScope.launch {
+            appearanceState.collect { pref ->
+                if (pref.monitoringEnabled) {
+                    IntelligenceSyncWorker.schedulePeriodic(getApplication())
+                } else {
+                    IntelligenceSyncWorker.cancelPeriodic(getApplication())
+                }
+            }
+        }
+
+        viewModelScope.launch {
+            combine(
+                habits,
+                notes,
+                focusSessions,
+                diaryEntries,
+                appRules
+            ) { h, n, f, d, r ->
+                listOf(h.size, n.size, f.size, d.size, r.size, h.sumOf { it.completedToday }.toInt())
+            }.collect {
+                delay(400L)
+                refreshIntelligencePipeline(runBriefingIfMissing = false)
+            }
+        }
     }
 
     private fun startSyncBridgeLoop() {
@@ -243,15 +419,24 @@ class FocusPulseViewModel(
         }
     }
 
-    fun refreshSystemTelemetry() {
+    fun refreshSystemTelemetry(checkOnboardingPrompt: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
             val perms = telemetryManager.checkPermissions()
             val battery = telemetryManager.readBatteryTelemetry()
             val apps = telemetryManager.queryAppsAndUsage()
+            val missingAny = !perms.notificationsGranted ||
+                !perms.microphoneGranted ||
+                !perms.usageStatsGranted ||
+                !perms.accessibilityEnabled ||
+                !perms.dndPolicyGranted ||
+                !perms.exactAlarmGranted
             withContext(Dispatchers.Main) {
                 _permissions.value = perms
                 _batteryTelemetry.value = battery
                 _deviceApps.value = apps
+                if (checkOnboardingPrompt && missingAny && !guardPrefs.hasPromptedPermissionsForUid(currentUserId)) {
+                    _showPermissionsPrompt.value = true
+                }
                 val cfg = (workspaceConfig.value as? UiState.Success)?.data
                 if (cfg != null) {
                     _sleepInsights.value = telemetryManager.computeSleepCircadianInsights(
@@ -267,6 +452,15 @@ class FocusPulseViewModel(
         telemetryManager.readStepSensorSnapshot { steps ->
             _stepsToday.value = steps
         }
+    }
+
+    fun openPermissionsPrompt() {
+        _showPermissionsPrompt.value = true
+    }
+
+    fun dismissPermissionsPrompt() {
+        guardPrefs.markPermissionsPromptedForUid(currentUserId)
+        _showPermissionsPrompt.value = false
     }
 
     fun clearStatusBanner() {
@@ -661,9 +855,10 @@ class FocusPulseViewModel(
         guardPrefs.touchUserActivity()
 
         buddyJob?.cancel()
-        val historyPairs = _buddyMessages.value.map { msg ->
-            (if (msg.isUser) "user" else "model") to msg.text
-        }
+        val historyPairs = _buddyMessages.value
+            .filter { it.id != "welcome" && it.text.isNotBlank() }
+            .map { msg -> (if (msg.isUser) "user" else "model") to msg.text }
+
         val userBubble = BuddyMessage("u_${System.currentTimeMillis()}", true, trimmed)
         _buddyMessages.value = _buddyMessages.value + userBubble
 
@@ -671,23 +866,27 @@ class FocusPulseViewModel(
         val lowStockCount = inventory.value.count { it.isLowStock }
         val totalRev = inventory.value.sumOf { it.totalRevenue }
         val todayEntry = diaryEntries.value.firstOrNull { it.dateKey == todayDateKey() }
-        val contextSummary = """
-            - Screen time today: ${String.format("%.1f", onlineHoursToday())}h across ${_deviceApps.value.size} tracked apps
-            - Habits completed today: ${habits.value.count { it.completedToday >= it.targetPerDay }}/${habits.value.size}
-            - Sleep schedule: Bed ${String.format("%02d:%02d", cfg.bedtimeHour, cfg.bedtimeMinute)}, Wake ${String.format("%02d:%02d", cfg.wakeHour, cfg.wakeMinute)}
-            - Inventory SKUs: ${inventory.value.size} ($lowStockCount low stock), Revenue $${String.format("%.2f", totalRev)}
-            - Today's diary: ${todayEntry?.activitiesText?.ifBlank { "No activities logged yet" } ?: "Not started"}
-            - Active Dashboard: ${cfg.activeDashboardId}
-        """.trimIndent()
+        val contextSummary = buildString {
+            appendLine("- Screen time today: ${String.format(Locale.US, "%.1f", onlineHoursToday())}h across ${_deviceApps.value.size} tracked apps")
+            appendLine("- Productivity Score: ${_intelligenceState.value.analytics.dailyProductivityScore}/100")
+            appendLine("- Habits completed today: ${habits.value.count { it.completedToday >= it.targetPerDay }}/${habits.value.size}")
+            appendLine("- Sleep schedule: Bed ${String.format(Locale.US, "%02d:%02d", cfg.bedtimeHour, cfg.bedtimeMinute)}, Wake ${String.format(Locale.US, "%02d:%02d", cfg.wakeHour, cfg.wakeMinute)}")
+            appendLine("- Inventory SKUs: ${inventory.value.size} ($lowStockCount low stock), Revenue $${String.format(Locale.US, "%.2f", totalRev)}")
+            appendLine("- Today's diary: ${todayEntry?.activitiesText?.ifBlank { "No activities logged yet" } ?: "Not started"}")
+        }
 
         buddyJob = viewModelScope.launch {
             _buddyState.value = AiBuddyUiState.Loading
             var finalResponse = ""
             try {
+                val retrieved = intelligenceRepo.memoryManager.retrieveRelevantMemories(trimmed, limit = 4)
+                val memNotes = if (retrieved.isNotEmpty()) {
+                    "\nRelevant AI Memories:\n" + retrieved.joinToString("\n") { "- [${it.tier}] ${it.summary}" }
+                } else ""
                 aiRepository.streamBuddyReply(
                     userMessage = trimmed,
                     historyPairs = historyPairs,
-                    contextSummary = contextSummary,
+                    contextSummary = contextSummary + memNotes,
                     persona = cfg.aiCoachPersona
                 ).collect { accumulated ->
                     finalResponse = accumulated
@@ -722,7 +921,456 @@ class FocusPulseViewModel(
     fun openUsageAccessSettings() = telemetryManager.openUsageAccessSettings()
     fun openAccessibilitySettings() = telemetryManager.openAccessibilitySettings()
     fun openDndPolicySettings() = telemetryManager.openDndPolicySettings()
+    fun openExactAlarmSettings() = telemetryManager.openExactAlarmSettings()
     fun openHealthConnectSettings() = telemetryManager.openHealthConnectSettings()
+
+    // --- Support Triage (Gemini + Admin Inbox) ---
+
+    fun resetSupportTriage() {
+        _supportTriageState.value = SupportTriageUiState.Idle
+    }
+
+    fun diagnoseAndSendSupport(
+        category: String,
+        issueText: String,
+        autoDelivered: Boolean = true
+    ) {
+        val cleanIssue = issueText.trim()
+        if (cleanIssue.isBlank()) {
+            _supportTriageState.value = SupportTriageUiState.Error("Please describe the problem first.")
+            return
+        }
+        viewModelScope.launch {
+            _supportTriageState.value = SupportTriageUiState.Loading
+            val cfg = currentConfigOrDefault()
+            val p = _permissions.value
+            val diagnostics = buildString {
+                append("User=${cfg.displayName}, Email=$userEmail, ")
+                append("Role=${cfg.role}, UsageStats=${p.usageStatsGranted}, Accessibility=${p.accessibilityEnabled}, ")
+                append("DND=${p.dndPolicyGranted}, Notifications=${p.notificationsGranted}, ExactAlarm=${p.exactAlarmGranted}, Mic=${p.microphoneGranted}")
+            }
+
+            val aiResult = aiRepository.troubleshootSupportIssue(
+                issueText = cleanIssue,
+                category = category,
+                appDiagnostics = diagnostics
+            )
+
+            aiResult.onSuccess { triage ->
+                var ticketId = ""
+                var delivered = false
+                if (autoDelivered) {
+                    val ticket = SupportTicket(
+                        userId = currentUserId,
+                        userEmail = userEmail,
+                        category = triage.recommendedCategory,
+                        message = cleanIssue,
+                        aiDiagnosis = triage.diagnosis,
+                        status = if (triage.resolvedLikely) "open" else "escalated",
+                        sentToWhatsApp = false
+                    )
+                    repository.createSupportTicket(ticket).onSuccess { id ->
+                        ticketId = id
+                        delivered = true
+                    }
+                }
+                _supportTriageState.value = SupportTriageUiState.Diagnosed(
+                    ticketId = ticketId,
+                    result = triage,
+                    deliveredToAdminInbox = delivered
+                )
+            }.onFailure { err ->
+                // Even if Gemini fails, still create the support ticket so Admin gets notified
+                var ticketId = ""
+                var delivered = false
+                if (autoDelivered) {
+                    val ticket = SupportTicket(
+                        userId = currentUserId,
+                        userEmail = userEmail,
+                        category = category,
+                        message = cleanIssue,
+                        aiDiagnosis = "Gemini offline: ${err.localizedMessage ?: "error"}",
+                        status = "escalated",
+                        sentToWhatsApp = false
+                    )
+                    repository.createSupportTicket(ticket).onSuccess { id ->
+                        ticketId = id
+                        delivered = true
+                    }
+                }
+                val msg = buildString {
+                    append(err.localizedMessage ?: "Gemini could not reach the server.")
+                    if (delivered) append(" Your message was still delivered to the Admin Inbox.")
+                }
+                _supportTriageState.value = SupportTriageUiState.Error(msg)
+            }
+        }
+    }
+
+    fun markSupportTicketResolvedByAi(ticketId: String, aiDiagnosis: String) {
+        if (ticketId.isBlank()) return
+        viewModelScope.launch {
+            repository.updateSupportTicketByUser(
+                ticketId = ticketId,
+                status = "ai_resolved",
+                sentToWhatsApp = false,
+                aiDiagnosis = aiDiagnosis
+            )
+            _statusBanner.value = "Marked resolved by Gemini Support."
+        }
+    }
+
+    fun markSupportTicketSentToWhatsApp(ticketId: String, aiDiagnosis: String) {
+        if (ticketId.isBlank()) return
+        viewModelScope.launch {
+            repository.updateSupportTicketByUser(
+                ticketId = ticketId,
+                status = "escalated",
+                sentToWhatsApp = true,
+                aiDiagnosis = aiDiagnosis
+            )
+        }
+    }
+
+    // --- Profile Display Name & Admin Support ---
+
+    fun updateDisplayName(displayName: String) {
+        val cleanName = displayName.trim()
+        if (cleanName.isBlank()) {
+            _statusBanner.value = "Display name cannot be empty."
+            return
+        }
+        viewModelScope.launch {
+            val cfg = currentConfigOrDefault()
+            val updated = cfg.copy(
+                displayName = cleanName,
+                email = userEmail.ifBlank { cfg.email }
+            )
+            repository.saveWorkspaceConfig(updated).onSuccess {
+                _statusBanner.value = "Profile name updated."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to update display name"
+            }
+        }
+    }
+
+    fun adminReplyTicket(ticketId: String, status: String, reply: String) {
+        if (!isAdminUser) return
+        viewModelScope.launch {
+            repository.updateSupportTicketByAdmin(ticketId, status, reply).onSuccess {
+                _statusBanner.value = "Ticket updated ($status)."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to update ticket"
+            }
+        }
+    }
+
+    // --- Immersive Glassmorphism Appearance & Wallpaper Controls ---
+
+    fun updateAppearance(transform: (AppearancePreferencesState) -> AppearancePreferencesState) {
+        viewModelScope.launch {
+            appearanceStore.update(transform)
+            _customBgRefreshKey.value += 1
+        }
+    }
+
+    fun updateGlobalWallpaper(transform: (WallpaperConfig) -> WallpaperConfig) {
+        updateAppearance { st -> st.copy(globalWallpaper = transform(st.globalWallpaper)) }
+    }
+
+    fun updatePerScreenWallpaper(screenKey: String, transform: (WallpaperConfig) -> WallpaperConfig) {
+        updateAppearance { st ->
+            val current = st.perScreenWallpapers[screenKey] ?: st.globalWallpaper
+            st.copy(perScreenWallpapers = st.perScreenWallpapers + (screenKey to transform(current)))
+        }
+    }
+
+    fun clearPerScreenWallpaper(screenKey: String) {
+        updateAppearance { st ->
+            st.copy(perScreenWallpapers = st.perScreenWallpapers - screenKey)
+        }
+    }
+
+    fun saveThemePreset(name: String) {
+        val clean = name.trim().ifBlank { "Custom Glass" }
+        val st = appearanceState.value
+        val preset = SavedThemePreset(
+            id = "preset_${System.currentTimeMillis()}",
+            name = clean,
+            darkModePreference = st.darkModePreference,
+            accentPalette = st.themePalette,
+            glassOpacity = st.glassOpacity,
+            glassBlurDp = st.glassBlurDp,
+            wallpaper = st.globalWallpaper,
+            partColors = st.partColors
+        )
+        updateAppearance { cur ->
+            cur.copy(savedPresets = (listOf(preset) + cur.savedPresets).take(10))
+        }
+        _statusBanner.value = "Saved preset \"$clean\"."
+    }
+
+    fun applyThemePreset(preset: SavedThemePreset) {
+        updateAppearance { cur ->
+            cur.copy(
+                darkModePreference = preset.darkModePreference,
+                themePalette = preset.accentPalette,
+                glassOpacity = preset.glassOpacity,
+                glassBlurDp = preset.glassBlurDp,
+                globalWallpaper = preset.wallpaper,
+                partColors = preset.partColors
+            )
+        }
+        _statusBanner.value = "Applied theme preset \"${preset.name}\"."
+    }
+
+    fun deleteThemePreset(presetId: String) {
+        updateAppearance { cur ->
+            cur.copy(savedPresets = cur.savedPresets.filterNot { it.id == presetId })
+        }
+    }
+
+    fun resetAppearancePreferences() {
+        viewModelScope.launch {
+            appearanceStore.resetAppearance()
+            _customBgRefreshKey.value += 1
+            _statusBanner.value = "Appearance reset to default glass theme."
+        }
+    }
+
+    fun toggleDashboardWidget(widgetId: String) {
+        updateAppearance { cur ->
+            cur.copy(
+                dashboardWidgets = cur.dashboardWidgets.map { w ->
+                    if (w.id == widgetId) w.copy(visible = !w.visible) else w
+                }
+            )
+        }
+    }
+
+    fun moveDashboardWidget(widgetId: String, direction: Int) {
+        updateAppearance { cur ->
+            val list = cur.dashboardWidgets.toMutableList()
+            val idx = list.indexOfFirst { it.id == widgetId }
+            val targetIdx = idx + direction
+            if (idx >= 0 && targetIdx in list.indices) {
+                val moved = list.removeAt(idx)
+                list.add(targetIdx, moved)
+            }
+            cur.copy(dashboardWidgets = list)
+        }
+    }
+
+    fun setMonitoringEnabled(enabled: Boolean) {
+        updateAppearance { it.copy(monitoringEnabled = enabled) }
+        _statusBanner.value = if (enabled) "Behavioural intelligence monitoring resumed." else "Monitoring paused. Existing insights remain available."
+    }
+
+    fun setRetentionDays(days: Int) {
+        val clamped = days.coerceIn(7, 365)
+        updateAppearance { it.copy(retentionDays = clamped) }
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.enforceRetention(clamped)
+        }
+        _statusBanner.value = "Data retention set to $clamped days."
+    }
+
+    // --- Evidence-Based AI Intelligence Pipeline ---
+
+    fun refreshIntelligencePipeline(runBriefingIfMissing: Boolean = false) {
+        intelligenceJob?.cancel()
+        intelligenceJob = viewModelScope.launch(Dispatchers.IO) {
+            _intelligenceState.value = _intelligenceState.value.copy(isRefreshing = true)
+            try {
+                val pref = appearanceState.value
+                val result = insightManager.refreshIntelligence(
+                    habits = habits.value,
+                    notes = notes.value,
+                    focusSessions = focusSessions.value,
+                    diaryEntries = diaryEntries.value,
+                    appRules = appRules.value,
+                    sleepInsights = _sleepInsights.value,
+                    monitoringEnabled = pref.monitoringEnabled,
+                    retentionDays = pref.retentionDays
+                )
+                latestPipelineResult = result
+                _intelligenceState.value = _intelligenceState.value.copy(
+                    isRefreshing = false,
+                    usageAccessGranted = result.usageAccessGranted,
+                    analytics = result.analytics,
+                    profile = result.profile,
+                    patterns = result.patterns,
+                    insights = result.insights
+                )
+                if (runBriefingIfMissing && _intelligenceState.value.briefing == null) {
+                    generateDailyAiBriefing()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "refreshIntelligencePipeline error", e)
+                _intelligenceState.value = _intelligenceState.value.copy(isRefreshing = false)
+            }
+        }
+    }
+
+    fun generateDailyAiBriefing() {
+        viewModelScope.launch {
+            _intelligenceState.value = _intelligenceState.value.copy(
+                briefingLoading = true,
+                briefingError = null
+            )
+            val pipeline = latestPipelineResult ?: withContext(Dispatchers.IO) {
+                val pref = appearanceState.value
+                insightManager.refreshIntelligence(
+                    habits = habits.value,
+                    notes = notes.value,
+                    focusSessions = focusSessions.value,
+                    diaryEntries = diaryEntries.value,
+                    appRules = appRules.value,
+                    sleepInsights = _sleepInsights.value,
+                    monitoringEnabled = pref.monitoringEnabled,
+                    retentionDays = pref.retentionDays
+                ).also { latestPipelineResult = it }
+            }
+            val persona = currentConfigOrDefault().aiCoachPersona
+            insightManager.generateAiDailyBriefing(pipeline, persona)
+                .onSuccess { res ->
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        briefing = res,
+                        briefingLoading = false
+                    )
+                }
+                .onFailure { err ->
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        briefingLoading = false,
+                        briefingError = err.localizedMessage ?: "Could not reach Gemini AI briefing."
+                    )
+                }
+        }
+    }
+
+    fun generatePeriodReport(periodTitle: String) {
+        viewModelScope.launch {
+            _intelligenceState.value = _intelligenceState.value.copy(periodReportLoading = true)
+            val pipeline = latestPipelineResult ?: withContext(Dispatchers.IO) {
+                val pref = appearanceState.value
+                insightManager.refreshIntelligence(
+                    habits = habits.value,
+                    notes = notes.value,
+                    focusSessions = focusSessions.value,
+                    diaryEntries = diaryEntries.value,
+                    appRules = appRules.value,
+                    sleepInsights = _sleepInsights.value,
+                    monitoringEnabled = pref.monitoringEnabled,
+                    retentionDays = pref.retentionDays
+                ).also { latestPipelineResult = it }
+            }
+            insightManager.generatePeriodReport(periodTitle, pipeline)
+                .onSuccess { report ->
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        periodReport = report,
+                        periodReportLoading = false
+                    )
+                }
+                .onFailure { err ->
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        periodReport = "Unable to generate $periodTitle report: ${err.localizedMessage}",
+                        periodReportLoading = false
+                    )
+                }
+        }
+    }
+
+    fun askIntelligenceQuestion(question: String) {
+        val clean = question.trim()
+        if (clean.isBlank()) return
+        viewModelScope.launch {
+            _intelligenceState.value = _intelligenceState.value.copy(qaLoading = true)
+            val pipeline = latestPipelineResult ?: withContext(Dispatchers.IO) {
+                val pref = appearanceState.value
+                insightManager.refreshIntelligence(
+                    habits = habits.value,
+                    notes = notes.value,
+                    focusSessions = focusSessions.value,
+                    diaryEntries = diaryEntries.value,
+                    appRules = appRules.value,
+                    sleepInsights = _sleepInsights.value,
+                    monitoringEnabled = pref.monitoringEnabled,
+                    retentionDays = pref.retentionDays
+                ).also { latestPipelineResult = it }
+            }
+            insightManager.askIntelligenceQuestion(clean, pipeline)
+                .onSuccess { ans ->
+                    val entry = IntelligenceQaMessage(
+                        id = "qa_${System.currentTimeMillis()}",
+                        question = clean,
+                        answer = ans.answer,
+                        citedEvidence = ans.citedEvidence
+                    )
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        qaMessages = (_intelligenceState.value.qaMessages + entry).takeLast(12),
+                        qaLoading = false
+                    )
+                }
+                .onFailure { err ->
+                    val entry = IntelligenceQaMessage(
+                        id = "qa_${System.currentTimeMillis()}",
+                        question = clean,
+                        answer = err.localizedMessage ?: "Failed to query Gemini Intelligence.",
+                        isError = true
+                    )
+                    _intelligenceState.value = _intelligenceState.value.copy(
+                        qaMessages = (_intelligenceState.value.qaMessages + entry).takeLast(12),
+                        qaLoading = false
+                    )
+                }
+        }
+    }
+
+    fun verifyOrEditPattern(patternId: String, note: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.updatePatternFeedback(patternId, note)
+        }
+        _statusBanner.value = "Pattern saved to verified profile."
+    }
+
+    fun deletePattern(patternId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.deletePattern(patternId)
+        }
+    }
+
+    fun editAiMemory(memoryId: String, updatedSummary: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.memoryManager.updateMemory(memoryId, updatedSummary)
+        }
+        _statusBanner.value = "AI Memory updated."
+    }
+
+    fun deleteAiMemory(memoryId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.memoryManager.deleteMemory(memoryId)
+        }
+    }
+
+    fun clearAllIntelligenceData() {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.clearAllIntelligenceData()
+            latestPipelineResult = null
+            _intelligenceState.value = IntelligenceUiState(
+                monitoringEnabled = appearanceState.value.monitoringEnabled,
+                retentionDays = appearanceState.value.retentionDays
+            )
+        }
+        _statusBanner.value = "Cleared local activity telemetry, patterns, and AI memory."
+    }
+
+    fun dismissInsight(insightId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            intelligenceRepo.dismissInsight(insightId)
+        }
+    }
 
     private fun unwrapFirestoreMessage(error: Throwable, fallback: String): String {
         val firestoreErr = generateSequence(error) { it.cause }

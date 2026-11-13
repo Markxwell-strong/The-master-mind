@@ -1,14 +1,9 @@
 package com.example.ui.theme
 
-import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
@@ -16,259 +11,226 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.example.R
 import com.example.data.model.UserWorkspaceConfig
-import com.example.system.BackgroundMediaStorage
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.example.data.preferences.AppearancePreferencesState
+import com.example.data.preferences.WallpaperConfig
 
 data class FocusUiTokens(
-    val cardStyle: String = "elevated",
-    val cornerRadius: Dp = 18.dp,
+    val isLightTheme: Boolean = false,
+    val cornerRadius: Dp = 20.dp,
     val compactDensity: Boolean = false,
     val appLayoutStyle: String = "bento_grid",
-    val navBarStyle: String = "bottom_bar",
-    val backgroundPreset: String = "none",
-    val backgroundOverlayAlpha: Float = 0.65f,
-    val cardOpacity: Float = 0.90f,
+    val glassOpacity: Float = 0.38f,
+    val glassBlurDp: Float = 12f,
+    val glassSurfaceColor: Color = Color(0x61111C33),
+    val glassElevatedColor: Color = Color(0x781A2742),
+    val glassSpecularBorderTop: Color = Color(0x47FFFFFF),
+    val glassSpecularBorderBottom: Color = Color(0x18FFFFFF),
     val resolvedBackgroundColor: Color = Color(0xFF070D1A),
-    val resolvedSurfaceColor: Color = Color(0xFF111C33),
-    val resolvedNavBarColor: Color = Color(0xFF0D1526),
-    val resolvedBorderColor: Color = Color(0xFF1B2944)
+    val resolvedNavBarColor: Color = Color(0x880B1324),
+    val resolvedBorderColor: Color = Color(0x3DFFFFFF)
 )
 
 val LocalFocusUiTokens = staticCompositionLocalOf { FocusUiTokens() }
 
-@Composable
-fun FocusPulseTheme(
-    paletteId: String = "emerald",
-    darkModePreference: String = "dark",
-    cardStyle: String = "elevated",
-    cornerRadiusDp: Int = 18,
-    compactDensity: Boolean = false,
-    content: @Composable () -> Unit
-) {
-    MasterMindTheme(
-        config = UserWorkspaceConfig(
-            themePalette = paletteId,
-            darkModePreference = darkModePreference,
-            cardStyle = cardStyle,
-            cornerRadiusDp = cornerRadiusDp.toLong(),
-            compactDensity = compactDensity
-        ),
-        content = content
-    )
+object ThemeManager {
+    fun resolveUseDark(
+        darkModePreference: String,
+        wallpaper: WallpaperConfig,
+        systemDark: Boolean
+    ): Boolean {
+        return when (darkModePreference) {
+            "light" -> false
+            "dark", "amoled" -> true
+            else -> {
+                if (wallpaper.sourceType == "built_in") {
+                    !BackgroundManager.wallpaperById(wallpaper.builtInId).isLightBackdrop
+                } else {
+                    systemDark
+                }
+            }
+        }
+    }
 }
 
 @Composable
-fun MasterMindTheme(
-    config: UserWorkspaceConfig,
-    activeRoute: String? = "dashboard",
+fun MasterMindGlassTheme(
+    appearance: AppearancePreferencesState,
+    activeRoute: String? = "home",
     content: @Composable () -> Unit
 ) {
-    val palette = paletteById(config.themePalette)
-    val tabPreset = tabAppearanceForRoute(activeRoute)
-    val useDynamicTabAccent = config.themePalette == "emerald"
-    val useDark = when (config.darkModePreference) {
-        "light" -> false
-        "dark", "amoled" -> true
-        else -> isSystemInDarkTheme()
-    }
-    val isAmoled = config.darkModePreference == "amoled"
+    val screenKey = BackgroundManager.normalizeScreenKey(activeRoute)
+    val wallpaper = BackgroundManager.resolveForScreen(appearance, screenKey)
+    val systemDark = isSystemInDarkTheme()
+    val useDark = ThemeManager.resolveUseDark(appearance.darkModePreference, wallpaper, systemDark)
+    val isAmoled = appearance.darkModePreference == "amoled"
 
-    val defaultBg = when {
-        !useDark -> tabPreset.bgLight
-        isAmoled -> Color(0xFF000000)
-        else -> tabPreset.bgDark
-    }
-    val defaultSurf = when {
-        !useDark -> tabPreset.surfaceLight
-        isAmoled -> Color(0xFF080C14)
-        else -> tabPreset.surfaceDark
-    }
-    val defaultSurfLow = when {
-        !useDark -> blendColors(tabPreset.surfaceLight, tabPreset.primaryLight, 0.03f)
-        isAmoled -> Color(0xFF0A101B)
-        else -> blendColors(tabPreset.surfaceDark, tabPreset.primaryDark, 0.06f)
-    }
-    val defaultSurfHigh = when {
-        !useDark -> blendColors(tabPreset.surfaceLight, tabPreset.primaryLight, 0.07f)
-        isAmoled -> Color(0xFF101829)
-        else -> blendColors(tabPreset.surfaceDark, tabPreset.primaryDark, 0.12f)
-    }
-    val defaultSurfHighest = when {
-        !useDark -> blendColors(tabPreset.surfaceLight, tabPreset.primaryLight, 0.12f)
-        isAmoled -> Color(0xFF162136)
-        else -> blendColors(tabPreset.surfaceDark, tabPreset.primaryDark, 0.18f)
-    }
+    val palette = paletteById(appearance.themePalette)
+    val tabPreset = tabAppearanceForRoute(screenKey)
+    val useDynamicTabAccent = appearance.themePalette == "emerald"
 
-    val targetPrimary = parseHexColorOrNull(config.partColors[MasterMindColorPart.PRIMARY.key])
+    val targetPrimary = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.PRIMARY.key])
         ?: if (useDynamicTabAccent) {
             if (useDark) tabPreset.primaryDark else tabPreset.primaryLight
         } else {
             if (useDark) palette.primaryDark else palette.primaryLight
         }
 
-    val targetSecondary = parseHexColorOrNull(config.partColors[MasterMindColorPart.SECONDARY.key])
+    val targetSecondary = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.SECONDARY.key])
         ?: if (useDynamicTabAccent) {
             if (useDark) tabPreset.secondaryDark else tabPreset.secondaryLight
         } else {
             if (useDark) palette.secondaryDark else palette.secondaryLight
         }
 
-    val targetTertiary = parseHexColorOrNull(config.partColors[MasterMindColorPart.TERTIARY.key])
+    val targetTertiary = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.TERTIARY.key])
         ?: if (useDynamicTabAccent) {
             if (useDark) tabPreset.tertiaryDark else tabPreset.tertiaryLight
         } else {
             if (useDark) palette.tertiaryDark else palette.tertiaryLight
         }
 
-    val targetBg = parseHexColorOrNull(config.partColors[MasterMindColorPart.BACKGROUND.key]) ?: defaultBg
-    val customSurf = parseHexColorOrNull(config.partColors[MasterMindColorPart.SURFACE.key])
-    val targetText = parseHexColorOrNull(config.partColors[MasterMindColorPart.TEXT.key])
-        ?: if (useDark) Color(0xFFF1F5F9) else Color(0xFF0F172A)
-    val targetMuted = parseHexColorOrNull(config.partColors[MasterMindColorPart.MUTED_TEXT.key])
-        ?: if (useDark) Color(0xFF94A3B8) else Color(0xFF475569)
-    val targetNavBar = parseHexColorOrNull(config.partColors[MasterMindColorPart.NAV_BAR.key])
-        ?: (customSurf ?: defaultSurf)
-    val targetBorder = parseHexColorOrNull(config.partColors[MasterMindColorPart.CARD_BORDER.key])
-        ?: if (useDark) blendColors(Color(0xFF2B3D5E), targetPrimary, 0.22f)
-        else blendColors(Color(0xFFCBD5E1), targetPrimary, 0.18f)
-    val targetButtonText = parseHexColorOrNull(config.partColors[MasterMindColorPart.BUTTON_TEXT.key])
+    val defaultBg = when {
+        !useDark -> tabPreset.bgLight
+        isAmoled -> Color(0xFF000000)
+        else -> tabPreset.bgDark
+    }
+    val customBgTarget = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.BACKGROUND.key]) ?: defaultBg
+    val customSurf = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.SURFACE.key])
+
+    // Enforce high-contrast legible typography regardless of wallpaper brightness
+    val targetText = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.TEXT.key])
+        ?: if (useDark) Color(0xFFF8FAFC) else Color(0xFF0F172A)
+    val targetMuted = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.MUTED_TEXT.key])
+        ?: if (useDark) Color(0xFFCBD5E1) else Color(0xFF334155)
+    val targetButtonText = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.BUTTON_TEXT.key])
         ?: if (useDark) Color(0xFF041410) else Color.White
 
-    // Smooth per-tab animated theme transitions
+    // Ensure card opacity never drops below readable floor when wallpaper brightness is extreme
+    val minSafeGlassAlpha = if (wallpaper.brightness > 1.12f && useDark) {
+        0.54f
+    } else if (!useDark && wallpaper.brightness < 0.85f) {
+        0.64f
+    } else {
+        0.24f
+    }
+    val effectiveGlassAlpha = appearance.glassOpacity.coerceIn(minSafeGlassAlpha, 0.90f)
+
+    val baseSurfaceTint = customSurf ?: if (useDark) {
+        if (isAmoled) Color(0xFF0A0F1A) else blendThemeColors(Color(0xFF0F172A), targetPrimary, 0.08f)
+    } else {
+        blendThemeColors(Color(0xFFFFFFFF), targetPrimary, 0.04f)
+    }
+
+    val targetNavBar = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.NAV_BAR.key])
+        ?: baseSurfaceTint.copy(alpha = (effectiveGlassAlpha + 0.24f).coerceIn(0.45f, 0.92f))
+
+    val targetBorder = parseHexColorOrNull(appearance.partColors[MasterMindColorPart.CARD_BORDER.key])
+        ?: if (useDark) Color.White.copy(alpha = 0.18f) else Color(0xFF0F172A).copy(alpha = 0.14f)
+
     val animSpec = tween<Color>(durationMillis = 360)
-    val customBg by animateColorAsState(targetBg, animSpec, label = "bgAnim")
-    val customPrimary by animateColorAsState(targetPrimary, animSpec, label = "primaryAnim")
-    val customSecondary by animateColorAsState(targetSecondary, animSpec, label = "secondaryAnim")
-    val customTertiary by animateColorAsState(targetTertiary, animSpec, label = "tertiaryAnim")
-    val customNavBar by animateColorAsState(targetNavBar, animSpec, label = "navAnim")
-    val customBorder by animateColorAsState(targetBorder, animSpec, label = "borderAnim")
+    val animBg by animateColorAsState(customBgTarget, animSpec, label = "bgAnim")
+    val animPrimary by animateColorAsState(targetPrimary, animSpec, label = "primaryAnim")
+    val animSecondary by animateColorAsState(targetSecondary, animSpec, label = "secondaryAnim")
+    val animTertiary by animateColorAsState(targetTertiary, animSpec, label = "tertiaryAnim")
+    val animNavBar by animateColorAsState(targetNavBar, animSpec, label = "navAnim")
+    val animBorder by animateColorAsState(targetBorder, animSpec, label = "borderAnim")
 
-    val cardAlpha = config.cardOpacity.toFloat().coerceIn(0.35f, 1.0f)
-    val hasVisualBg = config.backgroundPreset != "none"
-    val effectiveCardAlpha = if (hasVisualBg) cardAlpha else cardAlpha.coerceAtLeast(0.92f)
-
-    val surfBaseTarget = customSurf ?: defaultSurf
-    val surfBase by animateColorAsState(surfBaseTarget, animSpec, label = "surfBaseAnim")
-    val surfLow by animateColorAsState(
-        (customSurf ?: defaultSurfLow).copy(alpha = effectiveCardAlpha),
-        animSpec,
-        label = "surfLowAnim"
-    )
-    val surfHigh by animateColorAsState(
-        (customSurf?.let { blendColors(it, Color.White, if (useDark) 0.08f else 0.04f) }
-            ?: defaultSurfHigh).copy(alpha = effectiveCardAlpha),
-        animSpec,
-        label = "surfHighAnim"
-    )
-    val surfHighest by animateColorAsState(
-        customSurf?.let { blendColors(it, Color.White, if (useDark) 0.14f else 0.08f) }
-            ?: defaultSurfHighest,
-        animSpec,
-        label = "surfHighestAnim"
-    )
+    val glassSurface = baseSurfaceTint.copy(alpha = effectiveGlassAlpha)
+    val glassElevated = baseSurfaceTint.copy(alpha = (effectiveGlassAlpha + 0.14f).coerceIn(0.32f, 0.94f))
+    val glassHighest = baseSurfaceTint.copy(alpha = (effectiveGlassAlpha + 0.24f).coerceIn(0.40f, 0.96f))
 
     val colorScheme = if (useDark) {
         darkColorScheme(
-            primary = customPrimary,
+            primary = animPrimary,
             onPrimary = targetButtonText,
-            primaryContainer = customPrimary.copy(alpha = 0.20f),
-            onPrimaryContainer = customPrimary,
-            secondary = customSecondary,
+            primaryContainer = animPrimary.copy(alpha = 0.24f),
+            onPrimaryContainer = Color(0xFFE2F8F0),
+            secondary = animSecondary,
             onSecondary = Color(0xFF04131E),
-            secondaryContainer = customSecondary.copy(alpha = 0.18f),
-            onSecondaryContainer = customSecondary,
-            tertiary = customTertiary,
+            secondaryContainer = animSecondary.copy(alpha = 0.22f),
+            onSecondaryContainer = Color(0xFFE0F2FE),
+            tertiary = animTertiary,
             onTertiary = Color(0xFF1D1202),
-            tertiaryContainer = customTertiary.copy(alpha = 0.20f),
-            onTertiaryContainer = customTertiary,
-            background = customBg,
+            tertiaryContainer = animTertiary.copy(alpha = 0.22f),
+            onTertiaryContainer = Color(0xFFFEF3C7),
+            background = animBg,
             onBackground = targetText,
-            surface = surfBase.copy(alpha = effectiveCardAlpha),
+            surface = glassSurface,
             onSurface = targetText,
-            surfaceVariant = surfHigh,
+            surfaceVariant = glassElevated,
             onSurfaceVariant = targetMuted,
-            surfaceContainerLowest = customBg,
-            surfaceContainerLow = surfLow,
-            surfaceContainer = surfHigh,
-            surfaceContainerHigh = surfHighest,
-            outline = customBorder,
-            outlineVariant = customBorder.copy(alpha = 0.65f),
-            error = Color(0xFFF87171),
-            onError = Color(0xFF2A0707),
-            errorContainer = Color(0xFF451218),
-            onErrorContainer = Color(0xFFFCA5A5)
+            surfaceContainerLowest = animBg,
+            surfaceContainerLow = glassSurface,
+            surfaceContainer = glassElevated,
+            surfaceContainerHigh = glassHighest,
+            outline = animBorder,
+            outlineVariant = animBorder.copy(alpha = 0.65f),
+            error = Color(0xFFFCA5A5),
+            onError = Color(0xFF450A0A),
+            errorContainer = Color(0x997F1D1D),
+            onErrorContainer = Color(0xFFFEE2E2)
         )
     } else {
         lightColorScheme(
-            primary = customPrimary,
+            primary = animPrimary,
             onPrimary = targetButtonText,
-            primaryContainer = customPrimary.copy(alpha = 0.14f),
-            onPrimaryContainer = customPrimary,
-            secondary = customSecondary,
+            primaryContainer = animPrimary.copy(alpha = 0.16f),
+            onPrimaryContainer = animPrimary,
+            secondary = animSecondary,
             onSecondary = Color.White,
-            secondaryContainer = customSecondary.copy(alpha = 0.14f),
-            onSecondaryContainer = customSecondary,
-            tertiary = customTertiary,
+            secondaryContainer = animSecondary.copy(alpha = 0.16f),
+            onSecondaryContainer = animSecondary,
+            tertiary = animTertiary,
             onTertiary = Color.White,
-            tertiaryContainer = customTertiary.copy(alpha = 0.15f),
-            onTertiaryContainer = customTertiary,
-            background = customBg,
+            tertiaryContainer = animTertiary.copy(alpha = 0.16f),
+            onTertiaryContainer = animTertiary,
+            background = animBg,
             onBackground = targetText,
-            surface = surfBase.copy(alpha = effectiveCardAlpha),
+            surface = glassSurface,
             onSurface = targetText,
-            surfaceVariant = surfHigh,
+            surfaceVariant = glassElevated,
             onSurfaceVariant = targetMuted,
-            surfaceContainerLowest = customBg,
-            surfaceContainerLow = surfLow,
-            surfaceContainer = surfHigh,
-            surfaceContainerHigh = surfHighest,
-            outline = customBorder,
-            outlineVariant = customBorder.copy(alpha = 0.7f),
+            surfaceContainerLowest = animBg,
+            surfaceContainerLow = glassSurface,
+            surfaceContainer = glassElevated,
+            surfaceContainerHigh = glassHighest,
+            outline = animBorder,
+            outlineVariant = animBorder.copy(alpha = 0.7f),
             error = Color(0xFFDC2626),
             onError = Color.White,
-            errorContainer = Color(0xFFFEE2E2),
-            onErrorContainer = Color(0xFF991B1B)
+            errorContainer = Color(0xD9FEE2E2),
+            onErrorContainer = Color(0xFF7F1D1D)
         )
     }
 
-    val radius = config.cornerRadiusDp.toInt().coerceIn(4, 32).dp
+    val radius = appearance.cornerRadiusDp.coerceIn(8, 28).dp
     val shapes = Shapes(
-        small = RoundedCornerShape((radius * 0.6f).coerceAtLeast(4.dp)),
+        small = RoundedCornerShape((radius * 0.6f).coerceAtLeast(6.dp)),
         medium = RoundedCornerShape(radius),
         large = RoundedCornerShape((radius * 1.25f).coerceAtMost(32.dp))
     )
 
     val tokens = FocusUiTokens(
-        cardStyle = config.cardStyle,
+        isLightTheme = !useDark,
         cornerRadius = radius,
-        compactDensity = config.compactDensity,
-        appLayoutStyle = config.appLayoutStyle,
-        navBarStyle = config.navBarStyle,
-        backgroundPreset = config.backgroundPreset,
-        backgroundOverlayAlpha = config.backgroundOverlayAlpha.toFloat().coerceIn(0.05f, 0.98f),
-        cardOpacity = effectiveCardAlpha,
-        resolvedBackgroundColor = customBg,
-        resolvedSurfaceColor = surfLow,
-        resolvedNavBarColor = customNavBar,
-        resolvedBorderColor = customBorder
+        compactDensity = appearance.compactDensity,
+        appLayoutStyle = appearance.appLayoutStyle,
+        glassOpacity = effectiveGlassAlpha,
+        glassBlurDp = appearance.glassBlurDp,
+        glassSurfaceColor = glassSurface,
+        glassElevatedColor = glassElevated,
+        glassSpecularBorderTop = if (useDark) Color.White.copy(alpha = 0.26f) else Color.White.copy(alpha = 0.78f),
+        glassSpecularBorderBottom = if (useDark) Color.White.copy(alpha = 0.08f) else Color(0xFF0F172A).copy(alpha = 0.10f),
+        resolvedBackgroundColor = animBg,
+        resolvedNavBarColor = animNavBar,
+        resolvedBorderColor = animBorder
     )
 
     CompositionLocalProvider(LocalFocusUiTokens provides tokens) {
@@ -282,78 +244,44 @@ fun MasterMindTheme(
 }
 
 @Composable
+fun MasterMindTheme(
+    config: UserWorkspaceConfig,
+    activeRoute: String? = "home",
+    content: @Composable () -> Unit
+) {
+    MasterMindGlassTheme(
+        appearance = AppearancePreferencesState(
+            darkModePreference = config.darkModePreference,
+            themePalette = config.themePalette,
+            partColors = config.partColors,
+            glassOpacity = config.cardOpacity.toFloat().coerceIn(0.24f, 0.88f),
+            cornerRadiusDp = config.cornerRadiusDp.toInt().coerceIn(8, 28),
+            compactDensity = config.compactDensity,
+            appLayoutStyle = config.appLayoutStyle
+        ),
+        activeRoute = activeRoute,
+        content = content
+    )
+}
+
+@Composable
 fun MasterMindBackgroundHost(
     backgroundRefreshKey: Int,
+    appearanceState: AppearancePreferencesState = AppearancePreferencesState(),
+    activeRoute: String? = "home",
     modifier: Modifier = Modifier,
     content: @Composable BoxScope.() -> Unit
 ) {
-    val context = LocalContext.current
-    val tokens = LocalFocusUiTokens.current
-    var customBitmap by remember { mutableStateOf<Bitmap?>(null) }
-
-    LaunchedEffect(tokens.backgroundPreset, backgroundRefreshKey) {
-        customBitmap = if (tokens.backgroundPreset == "custom_photo") {
-            withContext(Dispatchers.IO) {
-                BackgroundMediaStorage.loadBitmap(context)
-            }
-        } else {
-            null
-        }
-    }
-
-    val primary = MaterialTheme.colorScheme.primary
-    val secondary = MaterialTheme.colorScheme.secondary
-    val baseBg = tokens.resolvedBackgroundColor
-
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        baseBg,
-                        blendColors(baseBg, primary, 0.09f),
-                        blendColors(baseBg, secondary, 0.07f)
-                    )
-                )
-            )
-    ) {
-        when (tokens.backgroundPreset) {
-            "pulse_nebula" -> {
-                Image(
-                    painter = painterResource(id = R.drawable.img_hero_pulse),
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(baseBg.copy(alpha = tokens.backgroundOverlayAlpha))
-                )
-            }
-            "custom_photo" -> {
-                val bmp = customBitmap
-                if (bmp != null) {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(baseBg.copy(alpha = tokens.backgroundOverlayAlpha))
-                    )
-                }
-            }
-        }
-        content()
-    }
+    GlassBackgroundHost(
+        appearanceState = appearanceState,
+        activeRoute = activeRoute,
+        backgroundRefreshKey = backgroundRefreshKey,
+        modifier = modifier,
+        content = content
+    )
 }
 
-private fun blendColors(base: Color, tint: Color, ratio: Float): Color {
+internal fun blendThemeColors(base: Color, tint: Color, ratio: Float): Color {
     val inv = 1f - ratio
     return Color(
         red = base.red * inv + tint.red * ratio,

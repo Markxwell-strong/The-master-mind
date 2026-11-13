@@ -292,3 +292,89 @@ test("Subcollection CRUD & Reorder terminal state locking", async () => {
     })
   );
 });
+
+test("Admin privileges (cleandemon5@gmail.com) & SupportTicket isolation", async () => {
+  const bobDb = testEnv.authenticatedContext(BOB_UID, { email: "bob@example.com", email_verified: true }).firestore();
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID, { email: "alice@example.com", email_verified: true }).firestore();
+  const adminDb = testEnv.authenticatedContext("admin_uid_1", { email: "cleandemon5@gmail.com", email_verified: true }).firestore();
+
+  // Regular user cannot self-promote to admin
+  await assertFails(
+    bobDb.collection("users").doc(BOB_UID).set({
+      userId: BOB_UID,
+      role: "admin",
+      activeDashboardId: "command_center",
+      themePalette: "emerald",
+      darkModePreference: "dark",
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Regular user creates normal member workspace & support ticket
+  await assertSucceeds(
+    bobDb.collection("users").doc(BOB_UID).set({
+      userId: BOB_UID,
+      displayName: "Bob",
+      email: "bob@example.com",
+      role: "member",
+      activeDashboardId: "command_center",
+      themePalette: "emerald",
+      darkModePreference: "dark",
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  await assertSucceeds(
+    bobDb.collection("supportTickets").doc("tkt_1").set({
+      userId: BOB_UID,
+      userEmail: "bob@example.com",
+      category: "ai",
+      message: "Need help with AI diary evaluation",
+      status: "escalated",
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Removed legacy category and username field are rejected
+  await assertFails(
+    bobDb.collection("supportTickets").doc("tkt_legacy").set({
+      userId: BOB_UID,
+      userEmail: "bob@example.com",
+      category: "forgot_password",
+      message: "Legacy test",
+      status: "open",
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Alice cannot read Bob's support ticket or list users
+  await assertFails(aliceDb.collection("supportTickets").doc("tkt_1").get());
+  await assertFails(aliceDb.collection("supportTickets").get());
+  await assertFails(aliceDb.collection("users").get());
+
+  // Bob can query only his own support tickets
+  await assertSucceeds(bobDb.collection("supportTickets").where("userId", "==", BOB_UID).get());
+
+  // Admin (cleandemon5@gmail.com verified) can list users, list tickets, and reply
+  await assertSucceeds(adminDb.collection("users").get());
+  await assertSucceeds(adminDb.collection("supportTickets").get());
+  await assertSucceeds(
+    adminDb.collection("supportTickets").doc("tkt_1").update({
+      status: "resolved",
+      adminReply: "AI Logic updated and verified.",
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Admin cannot arbitrarily modify another user's workspace doc
+  await assertFails(
+    adminDb.collection("users").doc(BOB_UID).update({
+      displayName: "Hijacked",
+      updatedAt: serverNow(),
+    })
+  );
+});

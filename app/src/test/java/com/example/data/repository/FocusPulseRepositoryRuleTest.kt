@@ -9,6 +9,7 @@ import com.example.data.model.HabitItem
 import com.example.data.model.InventoryItem
 import com.example.data.model.NoteItem
 import com.example.data.model.ReorderRecord
+import com.example.data.model.SupportTicket
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
@@ -187,6 +188,30 @@ class FocusPulseRepositoryRuleTest : FirestoreEmulatorTestBase() {
             assertNotNull("Expected nested FirebaseFirestoreException, got $e", firestoreException)
             assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, firestoreException!!.code)
         }
+    }
+
+    @Test
+    fun supportTicket_createAndObserveOwnTickets_succeeds() = runBlocking {
+        val aliceUid = signInTestUser(ALICE_EMAIL)
+        val repo = FocusPulseRepository(firestore)
+
+        val ticketId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.createSupportTicket(
+                SupportTicket(
+                    userEmail = ALICE_EMAIL,
+                    category = "ai",
+                    message = "Need assistance with AI diary feedback",
+                    aiDiagnosis = "Escalated to Admin console.",
+                    status = "escalated"
+                )
+            ).getOrThrow()
+        }
+        assertTrue(ticketId.isNotEmpty())
+
+        val tickets = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeMySupportTickets(aliceUid).first { list -> list.any { it.id == ticketId } }
+        }
+        assertTrue(tickets.any { it.id == ticketId && it.category == "ai" })
     }
 
     private companion object {

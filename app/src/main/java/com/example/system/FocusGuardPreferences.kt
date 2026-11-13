@@ -92,6 +92,16 @@ class FocusGuardPreferences(context: Context) {
         inactivityHours = prefs.getInt("inactivity_hours", 3)
     )
 
+    fun hasPromptedPermissionsForUid(uid: String): Boolean {
+        val safe = uid.replace(Regex("[^a-zA-Z0-9_-]"), "")
+        return prefs.getBoolean("perm_prompted_$safe", false)
+    }
+
+    fun markPermissionsPromptedForUid(uid: String) {
+        val safe = uid.replace(Regex("[^a-zA-Z0-9_-]"), "")
+        prefs.edit().putBoolean("perm_prompted_$safe", true).apply()
+    }
+
     fun isSleepWindowNow(): Boolean {
         if (!prefs.getBoolean("sleep_lock", true)) return false
         val bedMin = prefs.getInt("bed_h", 22) * 60 + prefs.getInt("bed_m", 30)

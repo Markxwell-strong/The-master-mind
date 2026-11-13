@@ -64,7 +64,10 @@ import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun HabitsAndNotebookScreen(viewModel: FocusPulseViewModel) {
+fun HabitsAndNotebookScreen(
+    viewModel: FocusPulseViewModel,
+    showHeader: Boolean = true
+) {
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val habits by viewModel.habits.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
@@ -79,26 +82,46 @@ fun HabitsAndNotebookScreen(viewModel: FocusPulseViewModel) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Habits & Notebook",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                Button(
-                    onClick = {
-                        if (activeTab == 0) showAddHabit = true else showAddNote = true
-                    },
-                    modifier = Modifier.testTag("habits_notes_add_button")
+        if (showHeader) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Add, null, Modifier.size(16.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text(if (activeTab == 0) "New Habit" else "New Note")
+                    Text(
+                        text = "Habits & Notebook",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Button(
+                        onClick = {
+                            if (activeTab == 0) showAddHabit = true else showAddNote = true
+                        },
+                        modifier = Modifier.testTag("habits_notes_add_button")
+                    ) {
+                        Icon(Icons.Default.Add, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (activeTab == 0) "New Habit" else "New Note")
+                    }
+                }
+            }
+        } else {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    Button(
+                        onClick = {
+                            if (activeTab == 0) showAddHabit = true else showAddNote = true
+                        },
+                        modifier = Modifier.testTag("habits_notes_add_button")
+                    ) {
+                        Icon(Icons.Default.Add, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (activeTab == 0) "New Habit" else "New Note")
+                    }
                 }
             }
         }
@@ -283,6 +306,7 @@ fun HabitsAndNotebookScreen(viewModel: FocusPulseViewModel) {
                 }
             }
         }
+        item { Spacer(Modifier.height(72.dp)) }
     }
 
     if (showAddHabit) {

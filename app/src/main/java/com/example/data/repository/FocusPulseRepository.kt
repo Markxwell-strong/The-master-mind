@@ -13,7 +13,9 @@ import com.example.data.model.HabitItem
 import com.example.data.model.InventoryItem
 import com.example.data.model.NoteItem
 import com.example.data.model.ReorderRecord
+import com.example.data.model.SupportTicket
 import com.example.data.model.UserWorkspaceConfig
+import com.example.system.AccountSecurityHelper
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -130,6 +132,11 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
 
     suspend fun ensureWorkspaceConfig(displayName: String): Result<UserWorkspaceConfig> = runCatching {
         val uid = requireUserId()
+        val authUser = auth.currentUser
+        val authEmail = authUser?.email.orEmpty().trim().lowercase()
+        val shouldBeAdmin = AccountSecurityHelper.isAdminEmail(authEmail) &&
+            (authUser?.isEmailVerified != false)
+        val expectedRole = if (shouldBeAdmin) "admin" else "member"
         val docRef = userDoc(uid)
         val existingSnap = try {
             docRef.get().await()
@@ -141,14 +148,33 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
         }
 
         if (existingSnap.exists()) {
-            existingSnap.toObject(
+            val loaded = existingSnap.toObject(
                 UserWorkspaceConfig::class.java,
                 DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
             ) ?: UserWorkspaceConfig(userId = uid, displayName = displayName)
+
+            val needsSync = (shouldBeAdmin && loaded.role != "admin") ||
+                (authEmail.isNotBlank() && loaded.email != authEmail)
+            if (needsSync) {
+                val synced = loaded.copy(
+                    role = if (shouldBeAdmin) "admin" else loaded.role,
+                    email = if (authEmail.isNotBlank()) authEmail else loaded.email
+                )
+                try {
+                    docRef.update(synced.toUpdateMap(deviceLabel())).await()
+                } catch (_: Exception) {
+                    // Best-effort role/email sync
+                }
+                synced
+            } else {
+                loaded
+            }
         } else {
             val initial = UserWorkspaceConfig(
                 userId = uid,
                 displayName = displayName.ifBlank { "Master Mind User" },
+                email = authEmail,
+                role = expectedRole,
                 lastActiveDevice = deviceLabel()
             )
             try {
@@ -165,13 +191,21 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
 
     suspend fun saveWorkspaceConfig(config: UserWorkspaceConfig): Result<Unit> = runCatching {
         val uid = requireUserId()
+        val authUser = auth.currentUser
+        val authEmail = authUser?.email.orEmpty().trim().lowercase()
+        val isVerifiedAdmin = AccountSecurityHelper.isAdminEmail(authEmail) &&
+            (authUser?.isEmailVerified != false)
+        val safeConfig = config.copy(
+            role = if (isVerifiedAdmin) "admin" else "member",
+            email = if (authEmail.isNotBlank()) authEmail else config.email
+        )
         val docRef = userDoc(uid)
         try {
             val snap = docRef.get().await()
             if (snap.exists()) {
-                docRef.update(config.toUpdateMap(deviceLabel())).await()
+                docRef.update(safeConfig.toUpdateMap(deviceLabel())).await()
             } else {
-                docRef.set(config.toCreateMap(uid, deviceLabel())).await()
+                docRef.set(safeConfig.toCreateMap(uid, deviceLabel())).await()
             }
         } catch (e: CancellationException) {
             throw e
@@ -408,6 +442,113 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, docRef.path)
+            throw e
+        }
+    }
+
+    // --- Support Tickets & Admin Password Recovery ---
+
+    fun observeMySupportTickets(uid: String): Flow<List<SupportTicket>> = flow {
+        val path = "supportTickets"
+        emitAll(
+            db.collection("supportTickets")
+                .whereEqualTo("userId", uid)
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(SupportTicket::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> logAndRethrow(error, OperationType.LIST, path) }
+        )
+    }
+
+    fun observeAllSupportTicketsForAdmin(): Flow<List<SupportTicket>> = flow {
+        val path = "supportTickets"
+        emitAll(
+            db.collection("supportTickets")
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(SupportTicket::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> logAndRethrow(error, OperationType.LIST, path) }
+        )
+    }
+
+    fun observeAllUsersForAdmin(): Flow<List<UserWorkspaceConfig>> = flow {
+        val path = "users"
+        emitAll(
+            db.collection("users")
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(UserWorkspaceConfig::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedByDescending { it.updatedAt?.seconds ?: 0L }
+                }
+                .catch { error -> logAndRethrow(error, OperationType.LIST, path) }
+        )
+    }
+
+    suspend fun createSupportTicket(ticket: SupportTicket): Result<String> = runCatching {
+        val uid = requireUserId()
+        val id = ticket.id.ifBlank { newSafeId("tkt") }
+        val docRef = db.collection("supportTickets").document(id)
+        try {
+            docRef.set(ticket.toCreateMap(uid)).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docRef.path)
+            throw e
+        }
+        id
+    }
+
+    suspend fun updateSupportTicketByUser(
+        ticketId: String,
+        status: String,
+        sentToWhatsApp: Boolean,
+        aiDiagnosis: String
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        require(ticketId.isNotBlank()) { "Ticket ID required" }
+        val docRef = db.collection("supportTickets").document(ticketId)
+        try {
+            docRef.update(
+                mapOf(
+                    "status" to status,
+                    "sentToWhatsApp" to sentToWhatsApp,
+                    "aiDiagnosis" to aiDiagnosis.take(4000),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun updateSupportTicketByAdmin(
+        ticketId: String,
+        status: String,
+        adminReply: String
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        require(ticketId.isNotBlank()) { "Ticket ID required" }
+        val docRef = db.collection("supportTickets").document(ticketId)
+        try {
+            docRef.update(
+                mapOf(
+                    "status" to status,
+                    "adminReply" to adminReply.take(2000),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
             throw e
         }
     }

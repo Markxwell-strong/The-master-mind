@@ -364,6 +364,20 @@ class DeviceTelemetryManager(private val context: Context) {
         )
     }
 
+    fun openExactAlarmSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                data = Uri.parse("package:${context.packageName}")
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try {
+                context.startActivity(intent)
+            } catch (_: Exception) {
+                openAppDetailsSettings(context.packageName)
+            }
+        }
+    }
+
     fun openHealthConnectSettings() {
         val intent = Intent("androidx.health.ACTION_HEALTH_CONNECT_SETTINGS")
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

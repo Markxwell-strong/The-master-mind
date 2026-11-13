@@ -37,7 +37,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.MainActivity
 import com.example.R
-import com.example.ui.theme.FocusPulseTheme
+import com.example.data.preferences.AppearancePreferencesState
+import com.example.ui.theme.MasterMindGlassTheme
 
 class FocusLockActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -49,7 +50,7 @@ class FocusLockActivity : ComponentActivity() {
         val unlockAt = intent.getStringExtra(EXTRA_UNLOCK_AT) ?: "Scheduled Wake Time"
 
         setContent {
-            FocusPulseTheme(darkModePreference = "dark") {
+            MasterMindGlassTheme(AppearancePreferencesState(darkModePreference = "dark")) {
                 FocusLockScreen(
                     title = title,
                     detail = detail,

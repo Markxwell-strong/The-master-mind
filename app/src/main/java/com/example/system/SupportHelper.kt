@@ -49,6 +49,13 @@ object SupportHelper {
     }
 }
 
+object AccountSecurityHelper {
+    const val ADMIN_EMAIL = "cleandemon5@gmail.com"
+
+    fun isAdminEmail(email: String?): Boolean =
+        email?.trim()?.equals(ADMIN_EMAIL, ignoreCase = true) == true
+}
+
 object BackgroundMediaStorage {
     private const val FILE_NAME = "custom_master_bg.jpg"
 

@@ -1,13 +1,11 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,34 +18,34 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AccountBalanceWallet
-import androidx.compose.material.icons.filled.Alarm
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BatteryChargingFull
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Psychology
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.ViewModule
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -58,58 +56,66 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.R
 import com.example.data.model.UserWorkspaceConfig
 import com.example.system.ProfileMediaStorage
+import com.example.ui.components.ActivityTimeline
+import com.example.ui.components.GlassButton
+import com.example.ui.components.GlassCard
+import com.example.ui.components.GlassRingGauge
+import com.example.ui.components.GlassTopBar
+import com.example.ui.components.InsightCard
 import com.example.ui.components.MasterMindAdaptiveBoard
 import com.example.ui.components.MasterMindDashboards
-import com.example.ui.components.MasterMindLayoutOptions
+import com.example.ui.components.ProgressIndicator
 import com.example.ui.components.PulseBarChart
-import com.example.ui.components.PulseCard
-import com.example.ui.components.PulseRingGauge
 import com.example.ui.components.PulseTrendSparkline
 import com.example.ui.components.SectionHeaderRow
+import com.example.ui.components.StatisticsCard
+import com.example.ui.components.TimelineEntryUi
 import com.example.ui.viewmodel.FocusPulseViewModel
 import com.example.ui.viewmodel.UiState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import kotlin.math.roundToInt
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DashboardHubScreen(
     viewModel: FocusPulseViewModel,
     onNavigateTab: (String) -> Unit,
     onOpenProfile: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenBusiness: () -> Unit = { onNavigateTab("business") },
+    onOpenNotifications: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+    val appearance by viewModel.appearanceState.collectAsStateWithLifecycle()
+    val intelligence by viewModel.intelligenceState.collectAsStateWithLifecycle()
+    val notifications by viewModel.notificationsFeed.collectAsStateWithLifecycle()
     val profilePhotoRefreshKey by viewModel.profilePhotoRefreshKey.collectAsStateWithLifecycle()
     val appRules by viewModel.appRules.collectAsStateWithLifecycle()
-    val blockedSites by viewModel.blockedSites.collectAsStateWithLifecycle()
     val habits by viewModel.habits.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val reorders by viewModel.reorders.collectAsStateWithLifecycle()
-    val diaryEntries by viewModel.diaryEntries.collectAsStateWithLifecycle()
-    val focusSessions by viewModel.focusSessions.collectAsStateWithLifecycle()
     val battery by viewModel.batteryTelemetry.collectAsStateWithLifecycle()
-    val deviceApps by viewModel.deviceApps.collectAsStateWithLifecycle()
     val sleepInsights by viewModel.sleepInsights.collectAsStateWithLifecycle()
     val deepWorkRemSec by viewModel.deepWorkRemainingSec.collectAsStateWithLifecycle()
 
     val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
     var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showWidgetCustomizer by remember { mutableStateOf(false) }
 
     val uid = viewModel.currentUid
     LaunchedEffect(profilePhotoRefreshKey, uid) {
@@ -118,542 +124,379 @@ fun DashboardHubScreen(
         }
     }
 
-    val activePreset = MasterMindDashboards.firstOrNull { it.id == config.activeDashboardId }
-        ?: MasterMindDashboards.first()
+    val greeting = remember(config.displayName) {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val period = when {
+            hour < 12 -> "Good morning"
+            hour < 17 -> "Good afternoon"
+            else -> "Good evening"
+        }
+        val first = config.displayName.trim().substringBefore(" ").ifBlank { "Master Mind" }
+        "$period, $first"
+    }
+    val todayDateLabel = remember {
+        SimpleDateFormat("EEEE, MMM d", Locale.getDefault()).format(Date())
+    }
+    val profileInitial = config.displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "M"
 
-    val onlineHours = remember(deviceApps) { deviceApps.sumOf { it.minutesToday } / 60.0 }
+    val analytics = intelligence.analytics
     val habitsDone = remember(habits) { habits.count { it.completedToday >= it.targetPerDay } }
-    val lowStockItems = remember(inventory) { inventory.filter { it.isLowStock } }
+    val pendingTasks = remember(notes) {
+        notes.filter { !it.isCompleted }
+            .sortedWith(compareByDescending<com.example.data.model.NoteItem> { it.isPinned }.thenBy { it.reminderAtMillis })
+    }
+    val nowMs = System.currentTimeMillis()
+    val lowStockCount = remember(inventory) { inventory.count { it.isLowStock } }
+    val totalUnitsInStock = remember(inventory) { inventory.sumOf { it.stockQty } }
     val totalRevenue = remember(inventory) { inventory.sumOf { it.totalRevenue } }
     val totalProfit = remember(inventory) { inventory.sumOf { it.grossProfit } }
-    val todayDiary = remember(diaryEntries) {
-        diaryEntries.firstOrNull { it.dateKey == viewModel.todayDateKey() }
+    val pricedRetail = remember(inventory) { inventory.filter { it.hasBuyingAndSellingPrice }.sumOf { it.retailValuation } }
+    val pricedStockProfit = remember(inventory) { inventory.filter { it.hasBuyingAndSellingPrice }.sumOf { it.expectedStockProfit } }
+    val avgMarginPct = if (pricedRetail > 0.0) (pricedStockProfit / pricedRetail) * 100.0 else 0.0
+
+    val timelineEntries = remember(intelligence.recentActivities) {
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        intelligence.recentActivities.take(6).map { rec ->
+            TimelineEntryUi(
+                id = rec.id,
+                title = rec.label,
+                detail = rec.details.ifBlank { "${rec.durationMinutes}m tracked" },
+                timeLabel = fmt.format(Date(rec.timestampMs)),
+                category = rec.sourceType.replace('_', ' ').replaceFirstChar { it.uppercase() }
+            )
+        }
     }
 
-    val dashboardBlocks: List<@Composable (Modifier) -> Unit> = when (activePreset.id) {
-        "command_center" -> buildList {
-            add { mod ->
-                HeroCommandBanner(
-                    modifier = mod,
-                    onlineHours = onlineHours,
-                    habitsDone = habitsDone,
-                    habitsTotal = habits.size,
-                    deepWorkRemSec = deepWorkRemSec,
-                    onStartDeepWork = { viewModel.startDeepWorkSession(config.deepWorkMinutes) },
-                    onStopDeepWork = { viewModel.stopDeepWorkSession() }
-                )
-            }
-            if ("doomscroll_shield" in config.enabledWidgets) {
-                add { mod ->
-                    ShieldOverviewWidget(
-                        modifier = mod,
-                        ruleCount = appRules.size,
-                        lockedCount = appRules.count { it.isLocked },
-                        siteCount = blockedSites.size,
-                        onOpenShield = { onNavigateTab("shield") }
-                    )
+    val widgetBlocks = buildList<@Composable (Modifier) -> Unit> {
+        appearance.dashboardWidgets.filter { it.visible }.forEach { widget ->
+            when (widget.id) {
+                "productivity_score" -> add { mod ->
+                    val score = analytics.dailyProductivityScore
+                    val delta = analytics.scoreDeltaVsYesterday
+                    val deltaText = if (delta >= 0) "+$delta vs yesterday" else "$delta vs yesterday"
+                    GlassCard(modifier = mod, accentBorder = true) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            GlassRingGauge(
+                                progress = score / 100f,
+                                centerLabel = "$score",
+                                modifier = Modifier.size(82.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Daily Productivity Score",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "$deltaText • ${intelligence.profile.peakProductiveWindow} peak window",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    AssistChip(
+                                        onClick = { onNavigateTab("intelligence") },
+                                        label = { Text("Intelligence") },
+                                        leadingIcon = { Icon(Icons.Default.Psychology, null, Modifier.size(16.dp)) }
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-            }
-            if ("sleep_optimizer" in config.enabledWidgets) {
-                add { mod ->
-                    SleepWidgetCard(
-                        modifier = mod,
-                        config = config,
-                        sleepHours = sleepInsights.estimatedSleepHours,
-                        recommendedWindow = sleepInsights.recommendedWakeWindows.firstOrNull().orEmpty(),
-                        onTriggerAlarm = { viewModel.triggerSampleAlarm(true) }
-                    )
+
+                "ai_daily_insight" -> add { mod ->
+                    val briefing = intelligence.briefing
+                    val topInsight = intelligence.insights.firstOrNull()
+                    if (briefing != null) {
+                        InsightCard(
+                            modifier = mod,
+                            title = briefing.headline,
+                            summary = briefing.summary,
+                            evidence = briefing.routineRecommendations.firstOrNull() ?: briefing.confidenceLabel,
+                            confidence = 0.88f,
+                            timestampLabel = "Gemini AI",
+                            comparisonPeriod = briefing.confidenceLabel,
+                            categoryLabel = "DAILY BRIEFING",
+                            actionRecommendation = "Open Intelligence Hub",
+                            onActionClick = { onNavigateTab("intelligence") }
+                        )
+                    } else if (topInsight != null) {
+                        InsightCard(
+                            modifier = mod,
+                            title = topInsight.title,
+                            summary = topInsight.summary,
+                            evidence = topInsight.evidence,
+                            confidence = topInsight.confidence,
+                            timestampLabel = "Today",
+                            comparisonPeriod = topInsight.comparisonPeriod,
+                            categoryLabel = topInsight.category,
+                            actionRecommendation = topInsight.actionRecommendation.ifBlank { "Generate Gemini Briefing" },
+                            onActionClick = {
+                                if (topInsight.actionRecommendation == "Start Deep-Work Sprint") {
+                                    viewModel.startDeepWorkSession(config.deepWorkMinutes)
+                                } else {
+                                    viewModel.generateDailyAiBriefing()
+                                }
+                            }
+                        )
+                    } else {
+                        GlassCard(modifier = mod, accentBorder = true) {
+                            SectionHeaderRow(
+                                title = "AI Daily Insight",
+                                subtitle = "Synthesize your habits, screen time, and focus patterns with Gemini",
+                                icon = Icons.Default.AutoAwesome
+                            )
+                            GlassButton(
+                                text = if (intelligence.briefingLoading) "Analyzing..." else "Generate Daily Briefing",
+                                icon = Icons.Default.AutoAwesome,
+                                enabled = !intelligence.briefingLoading,
+                                onClick = { viewModel.generateDailyAiBriefing() },
+                                modifier = Modifier.fillMaxWidth().testTag("home_generate_briefing_btn")
+                            )
+                        }
+                    }
                 }
-            }
-            if ("inventory_alerts" in config.enabledWidgets) {
-                add { mod ->
-                    InventoryFinancialSummaryCard(
-                        modifier = mod,
-                        skuCount = inventory.size,
-                        lowStockCount = lowStockItems.size,
-                        revenue = totalRevenue,
-                        profit = totalProfit,
-                        openReorders = reorders.count { it.status != "received" },
-                        onOpenOps = { onNavigateTab("ops") }
-                    )
+
+                "habits_today" -> add { mod ->
+                    GlassCard(modifier = mod) {
+                        SectionHeaderRow(
+                            title = "Today's Habit Completion",
+                            subtitle = if (habits.isEmpty()) "No habits created yet" else "$habitsDone of ${habits.size} targets reached",
+                            icon = Icons.Default.CheckCircle,
+                            trailing = {
+                                TextButton(onClick = { onNavigateTab("activities") }) {
+                                    Text("Manage")
+                                }
+                            }
+                        )
+                        val ratio = if (habits.isEmpty()) 0f else habitsDone.toFloat() / habits.size.toFloat()
+                        ProgressIndicator(
+                            progress = ratio,
+                            label = "Daily consistency",
+                            trailingLabel = "${(ratio * 100).roundToInt()}%"
+                        )
+                        habits.take(3).forEach { habit ->
+                            val done = habit.completedToday >= habit.targetPerDay
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(habit.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${habit.completedToday}/${habit.targetPerDay} • ${habit.streakDays}d streak",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                AssistChip(
+                                    onClick = { viewModel.incrementHabit(habit) },
+                                    label = { Text(if (done) "Done" else "+1") }
+                                )
+                            }
+                        }
+                    }
                 }
-            }
-            if ("diary_ai" in config.enabledWidgets) {
-                add { mod ->
-                    DiaryAiSummaryCard(
-                        modifier = mod,
-                        todayScore = todayDiary?.aiScore ?: -1L,
-                        feedback = todayDiary?.aiFeedback.orEmpty(),
-                        onOpenDiary = { onNavigateTab("diary") }
-                    )
+
+                "focus_screentime" -> add { mod ->
+                    GlassCard(modifier = mod) {
+                        SectionHeaderRow(
+                            title = "Focus & Screen-Time Summary",
+                            subtitle = "${appRules.count { it.isLocked }} locked apps • ${analytics.todayAppLaunches} launches today",
+                            icon = Icons.Default.Timer
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            StatisticsCard(
+                                label = "Focus Today",
+                                value = "${analytics.todayFocusMinutes}m",
+                                delta = if (analytics.weekComparison.focusDeltaPercent >= 0) {
+                                    "+${analytics.weekComparison.focusDeltaPercent}% vs 7d"
+                                } else {
+                                    "${analytics.weekComparison.focusDeltaPercent}% vs 7d"
+                                },
+                                icon = Icons.Default.Bolt,
+                                modifier = Modifier.weight(1f)
+                            )
+                            StatisticsCard(
+                                label = "Screen Time",
+                                value = "${analytics.todayScreenMinutes}m",
+                                delta = if (intelligence.usageAccessGranted) "Live telemetry" else "Usage off",
+                                icon = Icons.Default.Schedule,
+                                accentColor = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        if (deepWorkRemSec > 0L) {
+                            GlassButton(
+                                text = String.format(Locale.US, "Stop Deep Work (%02d:%02d)", deepWorkRemSec / 60, deepWorkRemSec % 60),
+                                icon = Icons.Default.Stop,
+                                tonal = true,
+                                onClick = { viewModel.stopDeepWorkSession() },
+                                modifier = Modifier.fillMaxWidth().testTag("stop_deep_work_btn")
+                            )
+                        } else {
+                            GlassButton(
+                                text = "Start ${config.deepWorkMinutes}m Deep-Work Sprint",
+                                icon = Icons.Default.PlayArrow,
+                                onClick = { viewModel.startDeepWorkSession(config.deepWorkMinutes) },
+                                modifier = Modifier.fillMaxWidth().testTag("start_deep_work_btn")
+                            )
+                        }
+                    }
+                }
+
+                "pending_tasks" -> add { mod ->
+                    val overdueCount = pendingTasks.count { it.reminderAtMillis in 1L..nowMs }
+                    GlassCard(modifier = mod, accentBorder = overdueCount > 0) {
+                        SectionHeaderRow(
+                            title = "Pending Tasks & Reminders",
+                            subtitle = if (overdueCount > 0) "$overdueCount overdue • ${pendingTasks.size} open" else "${pendingTasks.size} pending item(s)",
+                            icon = Icons.Default.Schedule,
+                            trailing = {
+                                TextButton(onClick = { onNavigateTab("activities") }) {
+                                    Text("View All")
+                                }
+                            }
+                        )
+                        if (pendingTasks.isEmpty()) {
+                            Text(
+                                text = "All tasks and reminders are clear.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            pendingTasks.take(4).forEach { note ->
+                                val overdue = note.reminderAtMillis in 1L..nowMs
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    IconButton(onClick = { viewModel.toggleNoteComplete(note) }) {
+                                        Icon(
+                                            imageVector = Icons.Outlined.CheckCircle,
+                                            contentDescription = "Complete task",
+                                            tint = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(note.title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(
+                                            text = if (overdue) "Overdue • ${note.category}" else note.content.ifBlank { note.category },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (overdue) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                "weekly_summary" -> add { mod ->
+                    val series = analytics.weeklySeries
+                    val comp = analytics.weekComparison
+                    GlassCard(modifier = mod) {
+                        SectionHeaderRow(
+                            title = "Weekly Performance Summary",
+                            subtitle = "Avg Score ${comp.currentAvgScore} (${if (comp.scoreDelta >= 0) "+${comp.scoreDelta}" else comp.scoreDelta} vs prior 7d)",
+                            icon = Icons.Default.TrendingUp
+                        )
+                        if (series.isNotEmpty()) {
+                            PulseBarChart(
+                                values = series.map { it.score.toFloat() },
+                                labels = series.map { it.dayLabel }
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            PulseTrendSparkline(
+                                points = series.map { (it.focusMinutes + 10L).toFloat() }
+                            )
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(
+                                "Focus: ${comp.currentFocusMinutes}m",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                "Screen: ${comp.currentScreenMinutes}m",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                            Text(
+                                "Habits: ${comp.currentHabitsDone}",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        }
+                    }
+                }
+
+                "recent_activity" -> add { mod ->
+                    GlassCard(modifier = mod) {
+                        SectionHeaderRow(
+                            title = "Recent Activity Timeline",
+                            subtitle = "Recorded habits, focus blocks, diary & usage",
+                            icon = Icons.Default.AutoAwesome
+                        )
+                        ActivityTimeline(entries = timelineEntries)
+                    }
+                }
+
+                "quick_modules" -> add { mod ->
+                    GlassCard(modifier = mod) {
+                        SectionHeaderRow(
+                            title = "Stock, Profit Margin & Sleep Guard",
+                            subtitle = "$totalUnitsInStock units across ${inventory.size} goods • Sleep ${String.format(Locale.US, "%.1f", sleepInsights.estimatedSleepHours)}h",
+                            icon = Icons.Default.Inventory2
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text("Available Stock", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$totalUnitsInStock ($lowStockCount low)", fontWeight = FontWeight.Bold)
+                            }
+                            Column {
+                                Text("Avg Margin", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    text = if (pricedRetail > 0.0) "${String.format(Locale.US, "%.1f", avgMarginPct)}%" else "—",
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                            }
+                            Column {
+                                Text("Gross Profit", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("$${totalProfit.roundToInt()}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GlassButton(
+                                text = "Stock & Profit Table",
+                                icon = Icons.Default.Inventory2,
+                                tonal = true,
+                                onClick = onOpenBusiness,
+                                modifier = Modifier.weight(1f).testTag("home_open_business_button")
+                            )
+                            GlassButton(
+                                text = "Sleep Guard",
+                                icon = Icons.Default.Bedtime,
+                                tonal = true,
+                                onClick = { onNavigateTab("activities") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
                 }
             }
         }
-
-        "anti_doomscroll" -> listOf(
-            { mod ->
-                ShieldOverviewWidget(
-                    modifier = mod,
-                    ruleCount = appRules.size,
-                    lockedCount = appRules.count { it.isLocked },
-                    siteCount = blockedSites.size,
-                    onOpenShield = { onNavigateTab("shield") }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Screen Time vs Daily Limits",
-                        subtitle = "Live device usage telemetry",
-                        icon = Icons.Default.Shield
-                    )
-                    val topApps = deviceApps.take(5)
-                    PulseBarChart(
-                        values = topApps.map { it.minutesToday.toFloat().coerceAtLeast(0f) },
-                        labels = topApps.map { it.appName }
-                    )
-                    appRules.forEach { rule ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(rule.appName, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "${rule.todayUsedMinutes}m / ${rule.dailyLimitMinutes}m limit",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (rule.isLocked) {
-                                OutlinedButton(onClick = { viewModel.unlockAppRule(rule) }) {
-                                    Text("Unlock")
-                                }
-                            } else {
-                                Button(onClick = { viewModel.lockAppUntilWake(rule) }) {
-                                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Lock")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        "sleep_circadian" -> listOf(
-            { mod ->
-                SleepWidgetCard(
-                    modifier = mod,
-                    config = config,
-                    sleepHours = sleepInsights.estimatedSleepHours,
-                    recommendedWindow = sleepInsights.recommendedWakeWindows.firstOrNull().orEmpty(),
-                    onTriggerAlarm = { viewModel.triggerSampleAlarm(false) }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod) {
-                    SectionHeaderRow(
-                        title = "Circadian REM Wake Windows",
-                        subtitle = "Synced steps: ${sleepInsights.stepCountToday}",
-                        icon = Icons.Default.Bedtime
-                    )
-                    sleepInsights.recommendedWakeWindows.forEach { win ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.secondaryContainer,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = win,
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { onNavigateTab("shield") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Adjust Bedtime & Health Sync")
-                    }
-                }
-            }
-        )
-
-        "deep_work" -> listOf(
-            { mod ->
-                DeepWorkHeroCard(
-                    modifier = mod,
-                    minutes = config.deepWorkMinutes,
-                    remainingSec = deepWorkRemSec,
-                    dndEnabled = config.deepWorkDndEnabled,
-                    sessionsCompleted = focusSessions.size,
-                    onStart = { viewModel.startDeepWorkSession(config.deepWorkMinutes) },
-                    onStop = { viewModel.stopDeepWorkSession() }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod) {
-                    SectionHeaderRow(
-                        title = "Distraction Gateway",
-                        subtitle = "${blockedSites.size} websites & ${appRules.count { it.blockDuringDeepWork }} apps shielded",
-                        icon = Icons.Default.Bolt
-                    )
-                    Button(onClick = { onNavigateTab("shield") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Configure Blocked Apps & Domains")
-                    }
-                }
-            }
-        )
-
-        "habit_matrix" -> listOf(
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Habit Completion Matrix",
-                        subtitle = "$habitsDone of ${habits.size} completed today",
-                        icon = Icons.Default.CheckCircle
-                    )
-                    val progress = if (habits.isEmpty()) 0f else habitsDone.toFloat() / habits.size
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(10.dp)
-                            .clip(RoundedCornerShape(6.dp))
-                    )
-                    habits.forEach { h ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.incrementHabit(h) }
-                                .padding(vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(h.title, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "${h.completedToday}/${h.targetPerDay} today • ${h.streakDays}d streak",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            AssistChip(onClick = { viewModel.incrementHabit(h) }, label = { Text("+1") })
-                        }
-                    }
-                    OutlinedButton(onClick = { onNavigateTab("habits") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open Full Habit Tracker")
-                    }
-                }
-            }
-        )
-
-        "battery_process" -> listOf(
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Live Battery Telemetry",
-                        subtitle = "${battery.chargeSource} • ${battery.healthLabel}",
-                        icon = Icons.Default.BatteryChargingFull
-                    )
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(18.dp)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) {
-                            PulseRingGauge(
-                                progress = battery.levelPercent / 100f,
-                                modifier = Modifier.size(84.dp)
-                            )
-                            Text(
-                                text = "${battery.levelPercent}%",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Temp: ${String.format("%.1f", battery.temperatureC)} °C")
-                            Text("Voltage: ${battery.voltageMv} mV")
-                            Text("Current: ${battery.currentMa} mA")
-                            Text("Power Saver: ${if (battery.powerSaveMode) "ON" else "OFF"}")
-                        }
-                    }
-                    Button(onClick = { onNavigateTab("shield") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Manage Background Processes (${deviceApps.count { it.isRunningBackground }} active)")
-                    }
-                }
-            }
-        )
-
-        "shop_inventory" -> listOf(
-            { mod ->
-                InventoryFinancialSummaryCard(
-                    modifier = mod,
-                    skuCount = inventory.size,
-                    lowStockCount = lowStockItems.size,
-                    revenue = totalRevenue,
-                    profit = totalProfit,
-                    openReorders = reorders.count { it.status != "received" },
-                    onOpenOps = { onNavigateTab("ops") }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod) {
-                    SectionHeaderRow(
-                        title = "Low-Stock & Reorder Queue",
-                        subtitle = "${lowStockItems.size} SKUs need attention",
-                        icon = Icons.Default.Inventory2
-                    )
-                    if (lowStockItems.isEmpty()) {
-                        Text("All inventory SKUs are above safety stock thresholds.")
-                    } else {
-                        lowStockItems.take(5).forEach { item ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text("${item.name} (${item.sku})", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "${item.stockQty} left",
-                                    color = MaterialTheme.colorScheme.error,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        )
-
-        "financial_pulse" -> listOf(
-            { mod ->
-                InventoryFinancialSummaryCard(
-                    modifier = mod,
-                    skuCount = inventory.size,
-                    lowStockCount = lowStockItems.size,
-                    revenue = totalRevenue,
-                    profit = totalProfit,
-                    openReorders = reorders.count { it.status != "received" },
-                    onOpenOps = { onNavigateTab("ops") }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod) {
-                    SectionHeaderRow(
-                        title = "SKU Revenue Distribution",
-                        subtitle = "Cloud-synced real-time commerce valuation",
-                        icon = Icons.Default.AccountBalanceWallet
-                    )
-                    val topSkus = inventory.sortedByDescending { it.totalRevenue }.take(5)
-                    PulseBarChart(
-                        values = topSkus.map { it.totalRevenue.toFloat().coerceAtLeast(0f) },
-                        labels = topSkus.map { it.sku },
-                        barColor = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
-        )
-
-        "voice_diary" -> listOf(
-            { mod ->
-                DiaryAiSummaryCard(
-                    modifier = mod,
-                    todayScore = todayDiary?.aiScore ?: -1L,
-                    feedback = todayDiary?.aiFeedback.orEmpty(),
-                    onOpenDiary = { onNavigateTab("diary") }
-                )
-            },
-            { mod ->
-                PulseCard(modifier = mod) {
-                    SectionHeaderRow(
-                        title = "Voice-to-Text Journal Status",
-                        subtitle = "Today online: ${String.format("%.1f", onlineHours)}h",
-                        icon = Icons.Default.Mic
-                    )
-                    Text(
-                        text = todayDiary?.activitiesText?.ifBlank { "No entry recorded yet today." }
-                            ?: "Tap below to dictate your day's progress with Voice-to-Text.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Button(onClick = { onNavigateTab("diary") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Record Voice Diary & Run AI Evaluation")
-                    }
-                }
-            }
-        )
-
-        "ai_buddy_hub" -> listOf(
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_ai_buddy),
-                            contentDescription = "Gemini AI Buddy",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .clip(CircleShape)
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Gemini AI Buddy", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            Text(
-                                "Persona: ${config.aiCoachPersona.replaceFirstChar { it.uppercase() }}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    Text(
-                        text = "Ask Gemini for real-time habit coaching, business margin analysis, or online-hour activity recommendations.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    Button(onClick = { onNavigateTab("diary") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open AI Buddy Chat")
-                    }
-                }
-            }
-        )
-
-        "notebook_reminders" -> listOf(
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Notebook & Due Reminders",
-                        subtitle = "${notes.count { !it.isCompleted }} open notes • ${notes.count { it.isPinned }} pinned",
-                        icon = Icons.Default.EditNote
-                    )
-                    notes.sortedByDescending { it.isPinned }.take(5).forEach { n ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(n.title, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    n.content.take(70),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Text(n.category.uppercase(), style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                    Button(onClick = { onNavigateTab("habits") }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open Notebook & Reminders")
-                    }
-                }
-            }
-        )
-
-        "minimal_zen" -> listOf(
-            { mod ->
-                DeepWorkHeroCard(
-                    modifier = mod,
-                    minutes = config.deepWorkMinutes,
-                    remainingSec = deepWorkRemSec,
-                    dndEnabled = config.deepWorkDndEnabled,
-                    sessionsCompleted = focusSessions.size,
-                    onStart = { viewModel.startDeepWorkSession(config.deepWorkMinutes, "Zen Single Focus") },
-                    onStop = { viewModel.stopDeepWorkSession() }
-                )
-            },
-            { mod ->
-                val topHabit = habits.firstOrNull { it.completedToday < it.targetPerDay } ?: habits.firstOrNull()
-                PulseCard(modifier = mod) {
-                    Text("PRIMARY INTENTION", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                    Text(
-                        text = topHabit?.title ?: "Log your primary intention in Habits or Diary",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (topHabit != null) {
-                        Button(onClick = { viewModel.incrementHabit(topHabit) }) {
-                            Text("Complete Priority")
-                        }
-                    }
-                }
-            }
-        )
-
-        "executive_telemetry" -> listOf(
-            { mod ->
-                PulseCard(modifier = mod, accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Executive KPI Matrix",
-                        subtitle = "Cross-domain telemetry across personal & business ops",
-                        icon = Icons.Default.AccountBalanceWallet
-                    )
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        KpiMini("Online Today", "${String.format("%.1f", onlineHours)}h")
-                        KpiMini("Habits", "$habitsDone/${habits.size}")
-                        KpiMini("Battery", "${battery.levelPercent}%")
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        KpiMini("Revenue", "$${totalRevenue.roundToInt()}")
-                        KpiMini("Gross Profit", "$${totalProfit.roundToInt()}")
-                        KpiMini("AI Score", if ((todayDiary?.aiScore ?: -1L) >= 0) "${todayDiary?.aiScore}" else "--")
-                    }
-                    PulseTrendSparkline(
-                        points = listOf(42f, 58f, 64f, 61f, 75f, 82f, (todayDiary?.aiScore?.toFloat() ?: 78f))
-                    )
-                }
-            }
-        )
-
-        "creator_sprint" -> listOf(
-            { mod ->
-                DeepWorkHeroCard(
-                    modifier = mod,
-                    minutes = 60L,
-                    remainingSec = deepWorkRemSec,
-                    dndEnabled = true,
-                    sessionsCompleted = focusSessions.size,
-                    onStart = { viewModel.startDeepWorkSession(60L, "Creator Focus Sprint") },
-                    onStop = { viewModel.stopDeepWorkSession() }
-                )
-            },
-            { mod ->
-                ShieldOverviewWidget(
-                    modifier = mod,
-                    ruleCount = appRules.size,
-                    lockedCount = appRules.count { it.isLocked },
-                    siteCount = blockedSites.size,
-                    onOpenShield = { onNavigateTab("shield") }
-                )
-            }
-        )
-
-        else -> listOf(
-            { mod ->
-                SleepWidgetCard(
-                    modifier = mod,
-                    config = config,
-                    sleepHours = sleepInsights.estimatedSleepHours,
-                    recommendedWindow = sleepInsights.recommendedWakeWindows.firstOrNull().orEmpty(),
-                    onTriggerAlarm = { viewModel.triggerSampleAlarm(true) }
-                )
-            },
-            { mod ->
-                DiaryAiSummaryCard(
-                    modifier = mod,
-                    todayScore = todayDiary?.aiScore ?: -1L,
-                    feedback = todayDiary?.aiFeedback.orEmpty(),
-                    onOpenDiary = { onNavigateTab("diary") }
-                )
-            }
-        )
     }
 
     LazyColumn(
@@ -661,356 +504,129 @@ fun DashboardHubScreen(
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Refined Header Row (zero numbers in title, Sync & Sign Out moved to Profile)
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = activePreset.title,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = activePreset.subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+            GlassTopBar(
+                title = greeting,
+                subtitle = "$todayDateLabel • ${if (intelligence.monitoringEnabled) "Intelligence Active" else "Monitoring Paused"}",
+                profileInitial = profileInitial,
+                profileBitmap = profileBitmap,
+                unreadNotifications = notifications.size,
+                onOpenProfile = onOpenProfile,
+                onOpenNotifications = onOpenNotifications,
+                trailingExtra = {
                     IconButton(
-                        onClick = onOpenSettings,
-                        modifier = Modifier.testTag("open_customizer_button")
+                        onClick = { showWidgetCustomizer = true },
+                        modifier = Modifier.testTag("customize_widgets_button")
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Palette,
-                            contentDescription = "Customize UI Colors, Background & Layouts"
+                            imageVector = Icons.Default.DashboardCustomize,
+                            contentDescription = "Customize Dashboard Widgets"
                         )
                     }
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(CircleShape)
-                            .clickable(onClick = onOpenProfile)
-                            .testTag("open_profile_button"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        val bmp = profileBitmap
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primaryContainer)
-                                .border(2.dp, MaterialTheme.colorScheme.primary, CircleShape),
-                            contentAlignment = Alignment.Center
+                }
+            )
+        }
+
+        // Quick Module Launch & Dashboard Preset Strip
+        item {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                item {
+                    FilterChip(
+                        selected = false,
+                        onClick = onOpenBusiness,
+                        label = { Text("Stock & Profit (${inventory.size})") },
+                        leadingIcon = { Icon(Icons.Default.Inventory2, null, Modifier.size(16.dp)) },
+                        modifier = Modifier.testTag("chip_open_business")
+                    )
+                }
+                items(MasterMindDashboards.take(6), key = { it.id }) { preset ->
+                    FilterChip(
+                        selected = config.activeDashboardId == preset.id,
+                        onClick = { viewModel.selectDashboard(preset.id) },
+                        label = { Text(preset.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        leadingIcon = { Icon(preset.icon, null, Modifier.size(16.dp)) }
+                    )
+                }
+            }
+        }
+
+        item {
+            if (widgetBlocks.isEmpty()) {
+                GlassCard(accentBorder = true) {
+                    Text("All dashboard widgets are hidden.", fontWeight = FontWeight.Bold)
+                    GlassButton(
+                        text = "Customize Dashboard Widgets",
+                        icon = Icons.Default.DashboardCustomize,
+                        onClick = { showWidgetCustomizer = true },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            } else {
+                MasterMindAdaptiveBoard(
+                    layoutStyle = appearance.appLayoutStyle,
+                    blocks = widgetBlocks
+                )
+            }
+        }
+
+        item { Spacer(Modifier.height(72.dp)) }
+    }
+
+    if (showWidgetCustomizer) {
+        AlertDialog(
+            onDismissRequest = { showWidgetCustomizer = false },
+            title = { Text("Customize Home Widgets") },
+            text = {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(appearance.dashboardWidgets, key = { it.id }) { widget ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            if (bmp != null) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = "Open Profile & Sync",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier.fillMaxSize()
-                                )
-                            } else {
-                                val initial = config.displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "M"
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
                                 Text(
-                                    text = initial,
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer
+                                    text = widget.title,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    IconButton(onClick = { viewModel.moveDashboardWidget(widget.id, -1) }) {
+                                        Icon(Icons.Default.ArrowUpward, contentDescription = "Move up")
+                                    }
+                                    IconButton(onClick = { viewModel.moveDashboardWidget(widget.id, 1) }) {
+                                        Icon(Icons.Default.ArrowDownward, contentDescription = "Move down")
+                                    }
+                                    Switch(
+                                        checked = widget.visible,
+                                        onCheckedChange = { viewModel.toggleDashboardWidget(widget.id) }
+                                    )
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
-
-        // Dashboard Switcher Strip (clean names, zero numbers)
-        item {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(MasterMindDashboards, key = { it.id }) { preset ->
-                    val selected = preset.id == activePreset.id
-                    FilterChip(
-                        selected = selected,
-                        onClick = { viewModel.selectDashboard(preset.id) },
-                        label = {
-                            Text(
-                                text = preset.title,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        leadingIcon = {
-                            Icon(
-                                imageVector = preset.icon,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        },
-                        modifier = Modifier.testTag("dashboard_chip_${preset.id}")
-                    )
+            },
+            confirmButton = {
+                Button(onClick = { showWidgetCustomizer = false }) {
+                    Text("Done")
                 }
             }
-        }
-
-        // Quick App Layout Mode Selector (Bento Grid / Carousel / Command Tiles / Stream)
-        item {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                item {
-                    Icon(
-                        imageVector = Icons.Default.ViewModule,
-                        contentDescription = "Layout switcher",
-                        tint = MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-                items(MasterMindLayoutOptions, key = { it.id }) { opt ->
-                    FilterChip(
-                        selected = config.appLayoutStyle == opt.id,
-                        onClick = { viewModel.updateWorkspaceConfig { it.copy(appLayoutStyle = opt.id) } },
-                        label = { Text(opt.title) },
-                        modifier = Modifier.testTag("quick_layout_${opt.id}")
-                    )
-                }
-            }
-        }
-
-        // Adaptive Multi-Layout Board (Not locked to a list)
-        item {
-            MasterMindAdaptiveBoard(
-                layoutStyle = config.appLayoutStyle,
-                blocks = dashboardBlocks
-            )
-        }
-    }
-}
-
-@Composable
-private fun HeroCommandBanner(
-    modifier: Modifier = Modifier,
-    onlineHours: Double,
-    habitsDone: Int,
-    habitsTotal: Int,
-    deepWorkRemSec: Long,
-    onStartDeepWork: () -> Unit,
-    onStopDeepWork: () -> Unit
-) {
-    PulseCard(modifier = modifier, accentBorder = true) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                val focusRatio = (1f - (onlineHours / 8.0).toFloat()).coerceIn(0.15f, 1f)
-                PulseRingGauge(
-                    progress = focusRatio,
-                    modifier = Modifier.size(76.dp)
-                )
-                Text(
-                    text = "${(focusRatio * 100).roundToInt()}%",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text("Daily Attention Pulse", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "Online: ${String.format("%.1f", onlineHours)}h • Habits: $habitsDone/$habitsTotal",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(8.dp))
-                if (deepWorkRemSec > 0L) {
-                    val m = deepWorkRemSec / 60
-                    val s = deepWorkRemSec % 60
-                    Button(onClick = onStopDeepWork, modifier = Modifier.testTag("stop_deep_work_btn")) {
-                        Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(String.format("Deep Work %02d:%02d", m, s))
-                    }
-                } else {
-                    Button(onClick = onStartDeepWork, modifier = Modifier.testTag("start_deep_work_btn")) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Start Deep Work")
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DeepWorkHeroCard(
-    modifier: Modifier = Modifier,
-    minutes: Long,
-    remainingSec: Long,
-    dndEnabled: Boolean,
-    sessionsCompleted: Int,
-    onStart: () -> Unit,
-    onStop: () -> Unit
-) {
-    PulseCard(modifier = modifier, accentBorder = true) {
-        SectionHeaderRow(
-            title = "Deep-Work Cockpit",
-            subtitle = "DND Silencer: ${if (dndEnabled) "Auto-Priority" else "Manual"} • $sessionsCompleted sprints",
-            icon = Icons.Default.Bolt
-        )
-        if (remainingSec > 0L) {
-            Text(
-                text = String.format("%02d:%02d remaining", remainingSec / 60, remainingSec % 60),
-                style = MaterialTheme.typography.displaySmall,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold
-            )
-            OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) {
-                Text("End Focus Sprint")
-            }
-        } else {
-            Text(
-                text = "$minutes min focus block ready",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
-            )
-            Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) {
-                Text("Launch Focus Sprint & Silence Distractions")
-            }
-        }
-    }
-}
-
-@Composable
-private fun ShieldOverviewWidget(
-    modifier: Modifier = Modifier,
-    ruleCount: Int,
-    lockedCount: Int,
-    siteCount: Int,
-    onOpenShield: () -> Unit
-) {
-    PulseCard(modifier = modifier) {
-        SectionHeaderRow(
-            title = "Anti-Doomscroll & Web Gateway",
-            subtitle = "$ruleCount app rules ($lockedCount locked) • $siteCount blocked sites",
-            icon = Icons.Default.Shield,
-            trailing = {
-                TextButton(onClick = onOpenShield) { Text("Manage") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun SleepWidgetCard(
-    modifier: Modifier = Modifier,
-    config: UserWorkspaceConfig,
-    sleepHours: Double,
-    recommendedWindow: String,
-    onTriggerAlarm: () -> Unit
-) {
-    PulseCard(modifier = modifier) {
-        SectionHeaderRow(
-            title = "Sleep & Circadian Optimizer",
-            subtitle = "Bed ${String.format("%02d:%02d", config.bedtimeHour, config.bedtimeMinute)} → Wake ${String.format("%02d:%02d", config.wakeHour, config.wakeMinute)} (${String.format("%.1f", sleepHours)}h)",
-            icon = Icons.Default.Bedtime,
-            trailing = {
-                IconButton(onClick = onTriggerAlarm) {
-                    Icon(Icons.Default.Alarm, contentDescription = "Test Sleep Alarm")
-                }
-            }
-        )
-        if (recommendedWindow.isNotBlank()) {
-            Text(
-                text = "Optimal REM wake window: $recommendedWindow",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.secondary
-            )
-        }
-    }
-}
-
-@Composable
-private fun InventoryFinancialSummaryCard(
-    modifier: Modifier = Modifier,
-    skuCount: Int,
-    lowStockCount: Int,
-    revenue: Double,
-    profit: Double,
-    openReorders: Int,
-    onOpenOps: () -> Unit
-) {
-    PulseCard(modifier = modifier) {
-        SectionHeaderRow(
-            title = "Shop Inventory & Cloud Financials",
-            subtitle = "$skuCount SKUs • $lowStockCount low stock • $openReorders active reorders",
-            icon = Icons.Default.Inventory2,
-            trailing = {
-                TextButton(onClick = onOpenOps) { Text("Open Ops") }
-            }
-        )
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            KpiMini("Revenue", "$${String.format("%.0f", revenue)}")
-            KpiMini("Gross Profit", "$${String.format("%.0f", profit)}")
-            val margin = if (revenue > 0) (profit / revenue) * 100 else 0.0
-            KpiMini("Margin", "${String.format("%.0f", margin)}%")
-        }
-    }
-}
-
-@Composable
-private fun DiaryAiSummaryCard(
-    modifier: Modifier = Modifier,
-    todayScore: Long,
-    feedback: String,
-    onOpenDiary: () -> Unit
-) {
-    PulseCard(modifier = modifier) {
-        SectionHeaderRow(
-            title = "Daily Voice Diary & Gemini AI",
-            subtitle = if (todayScore >= 0) "Today's Attainment Score: $todayScore/100" else "Tap to log today or get AI activity ideas",
-            icon = Icons.Default.AutoAwesome,
-            trailing = {
-                TextButton(onClick = onOpenDiary) { Text("Journal") }
-            }
-        )
-        if (feedback.isNotBlank()) {
-            Text(
-                text = feedback,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun KpiMini(label: String, value: String) {
-    Column {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Text(
-            text = value,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
         )
     }
 }

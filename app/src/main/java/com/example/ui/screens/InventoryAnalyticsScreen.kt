@@ -1,6 +1,11 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -9,25 +14,28 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
-import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -47,41 +55,76 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.InventoryItem
-import com.example.data.model.UserWorkspaceConfig
-import com.example.ui.components.MasterMindAdaptiveBoard
+import com.example.ui.components.GlassButton
+import com.example.ui.components.GlassCard
 import com.example.ui.components.PulseBarChart
-import com.example.ui.components.PulseCard
 import com.example.ui.components.PulseTrendSparkline
 import com.example.ui.components.SectionHeaderRow
+import com.example.ui.components.StatisticsCard
 import com.example.ui.viewmodel.FocusPulseViewModel
-import com.example.ui.viewmodel.UiState
+import java.util.Locale
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun InventoryAnalyticsScreen(viewModel: FocusPulseViewModel) {
-    val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+fun InventoryAnalyticsScreen(
+    viewModel: FocusPulseViewModel,
+    onBack: (() -> Unit)? = null,
+    showHeader: Boolean = true
+) {
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val reorders by viewModel.reorders.collectAsStateWithLifecycle()
-    val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
 
-    var selectedTab by remember { mutableIntStateOf(0) } // 0 = Inventory, 1 = Financial Analytics, 2 = Auto-Reorders
+    var filterMode by remember { mutableIntStateOf(0) } // 0 = All Goods, 1 = Low Stock, 2 = Priced Margin Only
+    var searchQuery by remember { mutableStateOf("") }
     var showAddSku by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<InventoryItem?>(null) }
 
     val lowStock = remember(inventory) { inventory.filter { it.isLowStock } }
+    val totalUnitsInStock = remember(inventory) { inventory.sumOf { it.stockQty } }
     val totalValuation = remember(inventory) { inventory.sumOf { it.totalValuation } }
     val retailValue = remember(inventory) { inventory.sumOf { it.retailValuation } }
     val totalRevenue = remember(inventory) { inventory.sumOf { it.totalRevenue } }
     val totalCogs = remember(inventory) { inventory.sumOf { it.totalCogs } }
     val grossProfit = remember(inventory) { inventory.sumOf { it.grossProfit } }
+
+    val pricedItems = remember(inventory) { inventory.filter { it.hasBuyingAndSellingPrice } }
+    val pricedRetailValue = remember(pricedItems) { pricedItems.sumOf { it.retailValuation } }
+    val expectedStockProfit = remember(pricedItems) { pricedItems.sumOf { it.expectedStockProfit } }
+    val weightedMarginPercent = remember(pricedRetailValue, expectedStockProfit) {
+        if (pricedRetailValue > 0.0) (expectedStockProfit / pricedRetailValue) * 100.0 else 0.0
+    }
+    val realizedMarginPercent = remember(totalRevenue, grossProfit) {
+        if (totalRevenue > 0.0) (grossProfit / totalRevenue) * 100.0 else 0.0
+    }
     val reorderSpend = remember(reorders) { reorders.sumOf { it.totalCost } }
+
+    val filteredInventory = remember(inventory, filterMode, searchQuery) {
+        val q = searchQuery.trim().lowercase(Locale.US)
+        inventory.filter { item ->
+            val matchesMode = when (filterMode) {
+                1 -> item.isLowStock
+                2 -> item.hasBuyingAndSellingPrice
+                else -> true
+            }
+            val matchesQuery = q.isEmpty() ||
+                item.name.lowercase(Locale.US).contains(q) ||
+                item.sku.lowercase(Locale.US).contains(q) ||
+                item.category.lowercase(Locale.US).contains(q) ||
+                item.supplierName.lowercase(Locale.US).contains(q)
+            matchesMode && matchesQuery
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -94,14 +137,22 @@ fun InventoryAnalyticsScreen(viewModel: FocusPulseViewModel) {
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                if (showHeader && onBack != null) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("business_back_button")
+                    ) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Shop Ops & Financials",
-                        style = MaterialTheme.typography.headlineSmall,
+                        text = if (showHeader) "Stock & Profit Management" else "Available Stock & Margin Table",
+                        style = if (showHeader) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${inventory.size} SKUs tracked • ${lowStock.size} low stock",
+                        text = "${inventory.size} goods • $totalUnitsInStock units in stock • ${lowStock.size} low stock",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -112,161 +163,202 @@ fun InventoryAnalyticsScreen(viewModel: FocusPulseViewModel) {
                 ) {
                     Icon(Icons.Default.Add, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Add SKU")
+                    Text("Add Stock")
                 }
             }
         }
 
+        // 1. Live Stock & Profit Margin KPI Row
         item {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    label = { Text("Inventory List") },
-                    leadingIcon = { Icon(Icons.Default.Inventory2, null, Modifier.size(16.dp)) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                StatisticsCard(
+                    label = "Available Stock",
+                    value = "$totalUnitsInStock units",
+                    delta = "${inventory.size} goods (${lowStock.size} low)",
+                    icon = Icons.Default.Inventory2,
+                    modifier = Modifier.weight(1f)
                 )
-                FilterChip(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    label = { Text("Analytics & P&L") },
-                    leadingIcon = { Icon(Icons.Default.AccountBalanceWallet, null, Modifier.size(16.dp)) }
-                )
-                FilterChip(
-                    selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    label = { Text("Auto-Reorders") },
-                    leadingIcon = { Icon(Icons.Default.LocalShipping, null, Modifier.size(16.dp)) }
+                StatisticsCard(
+                    label = "Profit Margin",
+                    value = if (pricedItems.isNotEmpty()) "${String.format(Locale.US, "%.1f", weightedMarginPercent)}%" else "—",
+                    delta = if (pricedItems.isNotEmpty()) {
+                        "Est. profit $${String.format(Locale.US, "%.2f", expectedStockProfit)}"
+                    } else {
+                        "Add buy & sell prices"
+                    },
+                    icon = Icons.AutoMirrored.Filled.TrendingUp,
+                    accentColor = MaterialTheme.colorScheme.secondary,
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
 
-        if (lowStock.isNotEmpty() && selectedTab == 0) {
-            item {
-                PulseCard(accentBorder = true) {
-                    SectionHeaderRow(
-                        title = "Low-Stock Reorder Alerts",
-                        subtitle = "${lowStock.size} items at or below reorder threshold",
-                        icon = Icons.Default.Warning
+        // 2. Financial Summary Card (Stock Valuation + Realized P&L)
+        item {
+            GlassCard(accentBorder = true) {
+                SectionHeaderRow(
+                    title = "Stock Valuation & Profit Summary",
+                    subtitle = "${pricedItems.size} of ${inventory.size} items have both buying & selling prices",
+                    icon = Icons.Default.AccountBalanceWallet
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    FinanceStat("Buying Value", "$${String.format(Locale.US, "%.2f", totalValuation)}")
+                    FinanceStat("Selling Value", "$${String.format(Locale.US, "%.2f", retailValue)}")
+                    FinanceStat(
+                        "Stock Profit",
+                        "$${String.format(Locale.US, "%.2f", expectedStockProfit)}",
+                        highlight = expectedStockProfit >= 0.0
                     )
-                    lowStock.forEach { item ->
-                        Text(
-                            text = "• ${item.name} (${item.sku}): ${item.stockQty} left (threshold ${item.lowStockThreshold})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
-                    }
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    FinanceStat("Sales Revenue", "$${String.format(Locale.US, "%.2f", totalRevenue)}")
+                    FinanceStat("Sales COGS", "$${String.format(Locale.US, "%.2f", totalCogs)}")
+                    FinanceStat(
+                        "Realized Margin",
+                        if (totalRevenue > 0.0) "${String.format(Locale.US, "%.1f", realizedMarginPercent)}%" else "—",
+                        highlight = grossProfit >= 0.0
+                    )
                 }
             }
         }
 
-        when (selectedTab) {
-            0 -> {
-                if (inventory.isEmpty()) {
-                    item {
-                        PulseCard {
-                            SectionHeaderRow(
-                                title = "Track Shop & Business Stock",
-                                subtitle = "Add products with optional buying & selling prices and low-stock alerts.",
-                                icon = Icons.Default.Inventory2
-                            )
-                            OutlinedButton(
+        // 3. Available Stock & Profit Margin Table (All Goods in One View)
+        item {
+            GlassCard {
+                SectionHeaderRow(
+                    title = "Available Stock & Goods Table",
+                    subtitle = "Scroll horizontally to view Buying, Selling, Profit/Unit, Margin %, and quick stock adjustments",
+                    icon = Icons.Default.TableChart
+                )
+
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Filter by product name, SKU, category, or supplier...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("stock_search_input")
+                )
+
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = filterMode == 0,
+                        onClick = { filterMode = 0 },
+                        label = { Text("All (${inventory.size})") }
+                    )
+                    FilterChip(
+                        selected = filterMode == 1,
+                        onClick = { filterMode = 1 },
+                        label = { Text("Low Stock (${lowStock.size})") }
+                    )
+                    FilterChip(
+                        selected = filterMode == 2,
+                        onClick = { filterMode = 2 },
+                        label = { Text("Priced (${pricedItems.size})") }
+                    )
+                }
+
+                if (filteredInventory.isEmpty()) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = if (inventory.isEmpty()) {
+                                "No stock items yet. Add goods with optional buying & selling prices to auto-calculate profit margins."
+                            } else {
+                                "No items match your current filter."
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        if (inventory.isEmpty()) {
+                            GlassButton(
+                                text = "Add First Stock Item",
+                                icon = Icons.Default.Add,
                                 onClick = { showAddSku = true },
                                 modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Add First Product SKU")
-                            }
+                            )
                         }
                     }
                 } else {
-                    items(inventory, key = { it.id }) { item ->
-                        InventoryListRowCard(
-                            item = item,
-                            onSellOne = { viewModel.adjustInventoryStock(item, -1L, recordSaleIfNegative = true) },
-                            onAddOne = { viewModel.adjustInventoryStock(item, +1L) },
-                            onAddFive = { viewModel.adjustInventoryStock(item, +5L) },
-                            onEdit = { editingItem = item },
-                            onDelete = { viewModel.deleteInventoryItem(item.id) }
-                        )
-                    }
-                }
-            }
-
-            1 -> {
-                val analyticsBlocks: List<@Composable (Modifier) -> Unit> = listOf(
-                    { mod ->
-                        PulseCard(modifier = mod, accentBorder = true) {
-                            SectionHeaderRow(
-                                title = "Cloud Financial & Profit Pulse",
-                                subtitle = "Real-time cross-device valuation & margin telemetry",
-                                icon = Icons.Default.AccountBalanceWallet
-                            )
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                FinanceStat("Revenue", "$${String.format("%.2f", totalRevenue)}")
-                                FinanceStat("COGS", "$${String.format("%.2f", totalCogs)}")
-                                FinanceStat("Gross Profit", "$${String.format("%.2f", grossProfit)}")
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                FinanceStat("Stock Cost Value", "$${String.format("%.2f", totalValuation)}")
-                                FinanceStat("Retail Value", "$${String.format("%.2f", retailValue)}")
-                                FinanceStat("Reorder Spend", "$${String.format("%.2f", reorderSpend)}")
-                            }
-                        }
-                    },
-                    { mod ->
-                        PulseCard(modifier = mod) {
-                            Text("Stock Valuation by SKU", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                            val top = inventory.sortedByDescending { it.retailValuation }.take(6)
-                            PulseBarChart(
-                                values = top.map { it.retailValuation.toFloat().coerceAtLeast(0f) },
-                                labels = top.map { it.sku }
-                            )
-                            Spacer(Modifier.size(8.dp))
-                            Text("Gross Profit Velocity", style = MaterialTheme.typography.titleSmall)
-                            PulseTrendSparkline(
-                                points = inventory.takeLast(6).map { it.grossProfit.toFloat().coerceAtLeast(0f) }
-                            )
-                        }
-                    }
-                )
-                item {
-                    MasterMindAdaptiveBoard(
-                        layoutStyle = config.appLayoutStyle,
-                        blocks = analyticsBlocks
+                    StockInventoryTable(
+                        items = filteredInventory,
+                        onSellOne = { viewModel.adjustInventoryStock(it, -1L, recordSaleIfNegative = true) },
+                        onAddOne = { viewModel.adjustInventoryStock(it, +1L) },
+                        onAddFive = { viewModel.adjustInventoryStock(it, +5L) },
+                        onEdit = { editingItem = it },
+                        onDelete = { viewModel.deleteInventoryItem(it.id) }
                     )
                 }
             }
+        }
 
-            else -> {
-                if (reorders.isEmpty()) {
-                    item {
-                        PulseCard {
-                            Text("No automated or manual reorders yet. When any SKU with Auto-Reorder ON drops to or below its threshold, THE MASTER MIND queues a supplier PO automatically.")
-                        }
+        // 4. Low-Stock Alerts & Automated Supplier Reorders in the Same View
+        item {
+            GlassCard(accentBorder = lowStock.isNotEmpty()) {
+                SectionHeaderRow(
+                    title = "Low-Stock Alerts & Auto-Reorders",
+                    subtitle = "${lowStock.size} low-stock alerts • ${reorders.count { it.status != "received" }} active supplier orders",
+                    icon = if (lowStock.isNotEmpty()) Icons.Default.Warning else Icons.Default.LocalShipping
+                )
+
+                if (lowStock.isNotEmpty()) {
+                    lowStock.forEach { item ->
+                        Text(
+                            text = "• ${item.name} (${item.sku}): ${item.stockQty} left (alert <= ${item.lowStockThreshold})",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                }
+
+                if (reorders.isEmpty()) {
+                    Text(
+                        text = "No supplier reorders queued. Items with Auto-Reorder ON generate purchase orders automatically when stock drops below threshold.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 } else {
-                    items(reorders, key = { it.id }) { order ->
-                        PulseCard(accentBorder = order.status != "received") {
+                    Text(
+                        text = "Total Reorder Spend: $${String.format(Locale.US, "%.2f", reorderSpend)}",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.secondary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    reorders.take(6).forEach { order ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 10.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("${order.itemName} (+${order.quantity})", fontWeight = FontWeight.Bold)
                                     Text(
-                                        "${order.supplierName} • $${String.format("%.2f", order.totalCost)} • ${if (order.isAutoTriggered) "AUTO-PO" else "MANUAL"}",
+                                        "${order.supplierName} • $${String.format(Locale.US, "%.2f", order.totalCost)} • ${order.status.uppercase()}",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        "Status: ${order.status.uppercase()}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.primary
                                     )
                                 }
                                 if (order.status != "received") {
                                     Button(onClick = { viewModel.receiveReorder(order) }) {
-                                        Text("Mark Received")
+                                        Text("Receive")
                                     }
                                 }
                             }
@@ -275,6 +367,35 @@ fun InventoryAnalyticsScreen(viewModel: FocusPulseViewModel) {
                 }
             }
         }
+
+        // 5. Stock Valuation & Profit Charts in the Same View
+        if (inventory.isNotEmpty()) {
+            item {
+                GlassCard {
+                    SectionHeaderRow(
+                        title = "Stock Value & Profit Charts",
+                        subtitle = "Top goods by retail valuation and profit velocity",
+                        icon = Icons.AutoMirrored.Filled.TrendingUp
+                    )
+                    val top = inventory.sortedByDescending { it.retailValuation.coerceAtLeast(it.totalValuation) }.take(6)
+                    PulseBarChart(
+                        values = top.map { it.retailValuation.coerceAtLeast(it.totalValuation).toFloat().coerceAtLeast(0f) },
+                        labels = top.map { it.sku.ifBlank { it.name.take(6) } }
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("Expected Stock Profit by SKU", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    PulseTrendSparkline(
+                        points = inventory.take(8).map {
+                            (if (it.hasBuyingAndSellingPrice) it.expectedStockProfit else it.grossProfit)
+                                .toFloat()
+                                .coerceAtLeast(0f)
+                        }
+                    )
+                }
+            }
+        }
+
+        item { Spacer(Modifier.height(72.dp)) }
     }
 
     if (showAddSku) {
@@ -302,156 +423,379 @@ fun InventoryAnalyticsScreen(viewModel: FocusPulseViewModel) {
 }
 
 @Composable
-private fun InventoryListRowCard(
-    item: InventoryItem,
-    onSellOne: () -> Unit,
-    onAddOne: () -> Unit,
-    onAddFive: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
+private fun StockInventoryTable(
+    items: List<InventoryItem>,
+    onSellOne: (InventoryItem) -> Unit,
+    onAddOne: (InventoryItem) -> Unit,
+    onAddFive: (InventoryItem) -> Unit,
+    onEdit: (InventoryItem) -> Unit,
+    onDelete: (InventoryItem) -> Unit
 ) {
-    PulseCard(accentBorder = item.isLowStock) {
-        // Header Row: Name + SKU + Category + Actions
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    val scrollState = rememberScrollState()
+
+    val colProduct: Dp = 154.dp
+    val colStock: Dp = 148.dp
+    val colBuy: Dp = 84.dp
+    val colSell: Dp = 84.dp
+    val colProfitUnit: Dp = 94.dp
+    val colMargin: Dp = 86.dp
+    val colStockProfit: Dp = 98.dp
+    val colSoldActions: Dp = 128.dp
+
+    val totalUnits = items.sumOf { it.stockQty }
+    val totalBuyVal = items.sumOf { it.totalValuation }
+    val totalSellVal = items.sumOf { it.retailValuation }
+    val totalExpProfit = items.filter { it.hasBuyingAndSellingPrice }.sumOf { it.expectedStockProfit }
+    val pricedRetail = items.filter { it.hasBuyingAndSellingPrice }.sumOf { it.retailValuation }
+    val totalMarginPct = if (pricedRetail > 0.0) (totalExpProfit / pricedRetail) * 100.0 else 0.0
+    val totalSold = items.sumOf { it.unitsSold }
+
+    Surface(
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.04f),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("stock_inventory_table")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(scrollState)
         ) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            // Table Header Row
+            Row(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TableHeaderCell("Product / SKU", colProduct)
+                TableHeaderCell("Available Stock", colStock)
+                TableHeaderCell("Buying", colBuy, alignEnd = true)
+                TableHeaderCell("Selling", colSell, alignEnd = true)
+                TableHeaderCell("Profit/Unit", colProfitUnit, alignEnd = true)
+                TableHeaderCell("Margin %", colMargin, alignEnd = true)
+                TableHeaderCell("Stock Profit", colStockProfit, alignEnd = true)
+                TableHeaderCell("Sold & Actions", colSoldActions, alignEnd = true)
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
+
+            // Table Data Rows
+            items.forEachIndexed { index, item ->
+                val rowBg = if (index % 2 == 1) {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
+                } else {
+                    Color.Transparent
+                }
+                val hasPrices = item.hasBuyingAndSellingPrice
+                val profitUnit = item.profitPerUnit
+                val marginPct = item.profitMarginPercent
+                val stockProfit = item.expectedStockProfit
+
                 Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    modifier = Modifier
+                        .background(rowBg)
+                        .clickable { onEdit(item) }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = item.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (item.isLowStock) {
-                        Surface(
-                            color = MaterialTheme.colorScheme.errorContainer,
-                            shape = RoundedCornerShape(6.dp)
+                    // Product / SKU
+                    Column(modifier = Modifier.width(colProduct)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
                             Text(
-                                text = "LOW STOCK",
-                                style = MaterialTheme.typography.labelSmall,
+                                text = item.name,
+                                style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            if (item.isLowStock) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.errorContainer,
+                                    shape = RoundedCornerShape(4.dp)
+                                ) {
+                                    Text(
+                                        text = "LOW",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
+                        Text(
+                            text = "${item.sku} • ${item.category}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    // Available Stock + inline quick -1 / +1 / +5 buttons
+                    Column(
+                        modifier = Modifier.width(colStock),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "${item.stockQty} units",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = if (item.isLowStock) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            MiniStockActionChip(
+                                label = "-1",
+                                enabled = item.stockQty > 0L,
+                                onClick = { onSellOne(item) }
+                            )
+                            MiniStockActionChip(
+                                label = "+1",
+                                enabled = true,
+                                onClick = { onAddOne(item) }
+                            )
+                            MiniStockActionChip(
+                                label = "+5",
+                                enabled = true,
+                                onClick = { onAddFive(item) }
                             )
                         }
                     }
+
+                    // Buying Price
+                    TableValueCell(
+                        text = if (item.unitCost > 0.0) "$${String.format(Locale.US, "%.2f", item.unitCost)}" else "—",
+                        width = colBuy,
+                        muted = item.unitCost <= 0.0
+                    )
+
+                    // Selling Price
+                    TableValueCell(
+                        text = if (item.unitPrice > 0.0) "$${String.format(Locale.US, "%.2f", item.unitPrice)}" else "—",
+                        width = colSell,
+                        muted = item.unitPrice <= 0.0
+                    )
+
+                    // Profit / Unit
+                    val profitColor = when {
+                        !hasPrices -> MaterialTheme.colorScheme.onSurfaceVariant
+                        profitUnit >= 0.0 -> MaterialTheme.colorScheme.primary
+                        else -> MaterialTheme.colorScheme.error
+                    }
+                    TableValueCell(
+                        text = if (hasPrices) {
+                            "${if (profitUnit >= 0) "+" else ""}$${String.format(Locale.US, "%.2f", profitUnit)}"
+                        } else "—",
+                        width = colProfitUnit,
+                        color = profitColor,
+                        bold = hasPrices
+                    )
+
+                    // Profit Margin %
+                    Box(
+                        modifier = Modifier.width(colMargin),
+                        contentAlignment = Alignment.CenterEnd
+                    ) {
+                        if (hasPrices) {
+                            val badgeColor = if (marginPct >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            Surface(
+                                color = badgeColor.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(999.dp)
+                            ) {
+                                Text(
+                                    text = "${String.format(Locale.US, "%.1f", marginPct)}%",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = badgeColor,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        } else {
+                            Text(
+                                text = "—",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    // Expected Profit on Available Stock
+                    TableValueCell(
+                        text = if (hasPrices) "$${String.format(Locale.US, "%.2f", stockProfit)}" else "—",
+                        width = colStockProfit,
+                        color = if (!hasPrices) MaterialTheme.colorScheme.onSurfaceVariant else if (stockProfit >= 0.0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
+                        bold = hasPrices
+                    )
+
+                    // Sold & Edit/Delete Actions
+                    Row(
+                        modifier = Modifier.width(colSoldActions),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Text(
+                            text = "${item.unitsSold}",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(end = 4.dp)
+                        )
+                        IconButton(
+                            onClick = { onEdit(item) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("edit_inventory_${item.id}")
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = "Edit ${item.name}", modifier = Modifier.size(18.dp))
+                        }
+                        IconButton(
+                            onClick = { onDelete(item) },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("delete_inventory_${item.id}")
+                        ) {
+                            Icon(Icons.Default.Delete, contentDescription = "Delete ${item.name}", modifier = Modifier.size(18.dp))
+                        }
+                    }
                 }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            }
+
+            // Table Totals Footer Row
+            Row(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
+                    .padding(horizontal = 10.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Text(
-                    text = "${item.sku} • ${item.category}${if (item.supplierName.isNotBlank()) " • ${item.supplierName}" else ""}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    text = "TOTAL (${items.size})",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(colProduct)
                 )
-            }
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(
-                    onClick = onEdit,
-                    modifier = Modifier.testTag("edit_inventory_${item.id}")
-                ) {
-                    Icon(Icons.Default.Edit, contentDescription = "Edit SKU")
-                }
-                IconButton(
-                    onClick = onDelete,
-                    modifier = Modifier.testTag("delete_inventory_${item.id}")
-                ) {
-                    Icon(Icons.Default.Delete, contentDescription = "Delete SKU")
-                }
-            }
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-        // Clean Scannable Metrics Strip
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-            InventoryMetricCell(
-                label = "In Stock",
-                value = "${item.stockQty}",
-                highlightError = item.isLowStock,
-                modifier = Modifier.weight(1f)
-            )
-            InventoryMetricCell(
-                label = "Sold",
-                value = "${item.unitsSold}",
-                modifier = Modifier.weight(1f)
-            )
-            InventoryMetricCell(
-                label = "Buying",
-                value = if (item.unitCost > 0.0) "$${String.format("%.2f", item.unitCost)}" else "Optional",
-                muted = item.unitCost <= 0.0,
-                modifier = Modifier.weight(1f)
-            )
-            InventoryMetricCell(
-                label = "Selling",
-                value = if (item.unitPrice > 0.0) "$${String.format("%.2f", item.unitPrice)}" else "Optional",
-                muted = item.unitPrice <= 0.0,
-                modifier = Modifier.weight(1f)
-            )
-        }
-
-        val unitProfitText = if (item.unitCost > 0.0 && item.unitPrice > 0.0) {
-            val profitPerUnit = item.unitPrice - item.unitCost
-            "Profit/unit: $${String.format("%.2f", profitPerUnit)} • "
-        } else {
-            ""
-        }
-        Text(
-            text = "${unitProfitText}Alert <= ${item.lowStockThreshold} • Auto-Reorder: ${if (item.autoReorder) "ON (+${item.reorderQty})" else "OFF"}",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        // Easy One-Tap Stock Update Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedButton(
-                onClick = onSellOne,
-                enabled = item.stockQty > 0L,
-                modifier = Modifier.weight(1.1f)
-            ) {
-                Icon(Icons.Default.ShoppingCart, null, Modifier.size(15.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("-1 Sell")
-            }
-            FilledTonalButton(
-                onClick = onAddOne,
-                modifier = Modifier.weight(0.9f)
-            ) {
-                Text("+1")
-            }
-            Button(
-                onClick = onAddFive,
-                modifier = Modifier.weight(1f)
-            ) {
-                Text("+5 Stock")
+                Text(
+                    text = "$totalUnits units",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(colStock)
+                )
+                TableValueCell(
+                    text = "$${String.format(Locale.US, "%.2f", totalBuyVal)}",
+                    width = colBuy,
+                    bold = true
+                )
+                TableValueCell(
+                    text = "$${String.format(Locale.US, "%.2f", totalSellVal)}",
+                    width = colSell,
+                    bold = true
+                )
+                TableValueCell(
+                    text = "—",
+                    width = colProfitUnit,
+                    muted = true
+                )
+                TableValueCell(
+                    text = if (pricedRetail > 0.0) "${String.format(Locale.US, "%.1f", totalMarginPct)}%" else "—",
+                    width = colMargin,
+                    color = MaterialTheme.colorScheme.primary,
+                    bold = true
+                )
+                TableValueCell(
+                    text = "$${String.format(Locale.US, "%.2f", totalExpProfit)}",
+                    width = colStockProfit,
+                    color = MaterialTheme.colorScheme.secondary,
+                    bold = true
+                )
+                TableValueCell(
+                    text = "$totalSold sold",
+                    width = colSoldActions,
+                    bold = true
+                )
             }
         }
     }
 }
 
 @Composable
-private fun InventoryMetricCell(
+private fun TableHeaderCell(
+    label: String,
+    width: Dp,
+    alignEnd: Boolean = false
+) {
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface,
+        textAlign = if (alignEnd) TextAlign.End else TextAlign.Start,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .width(width)
+            .padding(horizontal = 4.dp)
+    )
+}
+
+@Composable
+private fun TableValueCell(
+    text: String,
+    width: Dp,
+    color: Color = MaterialTheme.colorScheme.onSurface,
+    bold: Boolean = false,
+    muted: Boolean = false
+) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.bodySmall,
+        fontWeight = if (bold) FontWeight.Bold else FontWeight.Medium,
+        color = if (muted) MaterialTheme.colorScheme.onSurfaceVariant else color,
+        textAlign = TextAlign.End,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .width(width)
+            .padding(horizontal = 4.dp)
+    )
+}
+
+@Composable
+private fun MiniStockActionChip(
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit
+) {
+    Surface(
+        color = if (enabled) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
+        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick)
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold,
+            color = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+        )
+    }
+}
+
+@Composable
+private fun FinanceStat(
     label: String,
     value: String,
-    highlightError: Boolean = false,
-    muted: Boolean = false,
-    modifier: Modifier = Modifier
+    highlight: Boolean = false
 ) {
-    Column(modifier = modifier) {
+    Column {
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
@@ -459,22 +803,10 @@ private fun InventoryMetricCell(
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.titleSmall,
+            style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold,
-            color = when {
-                highlightError -> MaterialTheme.colorScheme.error
-                muted -> MaterialTheme.colorScheme.onSurfaceVariant
-                else -> MaterialTheme.colorScheme.onSurface
-            }
+            color = if (highlight) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
         )
-    }
-}
-
-@Composable
-private fun FinanceStat(label: String, value: String) {
-    Column {
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
     }
 }
 
@@ -485,7 +817,7 @@ private fun InventoryFormDialog(
     onConfirm: (InventoryItem) -> Unit
 ) {
     val isEdit = existing != null
-    var sku by remember { mutableStateOf(existing?.sku ?: "SKU-001") }
+    var sku by remember { mutableStateOf(existing?.sku ?: "SKU-${(100..999).random()}") }
     var name by remember { mutableStateOf(existing?.name ?: "") }
     var category by remember { mutableStateOf(existing?.category ?: "Retail") }
     var stockQty by remember { mutableStateOf((existing?.stockQty ?: 12L).toString()) }
@@ -517,18 +849,29 @@ private fun InventoryFormDialog(
         }
     }
 
+    val draftBuy = buyingPrice.toDoubleOrNull() ?: 0.0
+    val draftSell = sellingPrice.toDoubleOrNull() ?: 0.0
+    val draftQty = stockQty.toLongOrNull() ?: 0L
+    val hasLivePricing = draftBuy > 0.0 && draftSell > 0.0
+    val liveProfitPerUnit = draftSell - draftBuy
+    val liveMarginPct = if (hasLivePricing) ((draftSell - draftBuy) / draftSell) * 100.0 else 0.0
+    val liveMarkupPct = if (hasLivePricing) ((draftSell - draftBuy) / draftBuy) * 100.0 else 0.0
+    val liveStockProfit = draftQty * liveProfitPerUnit
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (isEdit) "Update Inventory Item" else "Add Inventory SKU") },
+        title = { Text(if (isEdit) "Update Stock Item" else "Add Stock Goods") },
         text = {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
                     OutlinedTextField(
                         value = name,
                         onValueChange = { name = it },
-                        label = { Text("Product Name") },
+                        label = { Text("Product / Goods Name") },
                         singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("inventory_name_input")
                     )
                 }
                 item {
@@ -554,7 +897,7 @@ private fun InventoryFormDialog(
                         OutlinedTextField(
                             value = stockQty,
                             onValueChange = { stockQty = it.filter { c -> c.isDigit() } },
-                            label = { Text("Stock Qty") },
+                            label = { Text("Available Qty") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             modifier = Modifier.weight(1f),
                             singleLine = true
@@ -574,23 +917,63 @@ private fun InventoryFormDialog(
                         OutlinedTextField(
                             value = buyingPrice,
                             onValueChange = { buyingPrice = filterDecimal(it) },
-                            label = { Text("Buying Price (Optional)") },
+                            label = { Text("Buying Price") },
                             placeholder = { Text("0.00") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("inventory_buying_input"),
                             singleLine = true
                         )
                         OutlinedTextField(
                             value = sellingPrice,
                             onValueChange = { sellingPrice = filterDecimal(it) },
-                            label = { Text("Selling Price (Optional)") },
+                            label = { Text("Selling Price") },
                             placeholder = { Text("0.00") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("inventory_selling_input"),
                             singleLine = true
                         )
                     }
                 }
+
+                // Live Profit Margin Preview inside Dialog
+                if (hasLivePricing) {
+                    item {
+                        val isPositive = liveProfitPerUnit >= 0.0
+                        Surface(
+                            color = (if (isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error)
+                                .copy(alpha = 0.14f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(3.dp)
+                            ) {
+                                Text(
+                                    text = "Calculated Profit Margin",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
+                                Text(
+                                    text = "Profit/unit: $${String.format(Locale.US, "%.2f", liveProfitPerUnit)} • Margin: ${String.format(Locale.US, "%.1f", liveMarginPct)}% • Markup: ${String.format(Locale.US, "%.1f", liveMarkupPct)}%",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Est. Profit on $draftQty units: $${String.format(Locale.US, "%.2f", liveStockProfit)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 item {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
@@ -643,8 +1026,9 @@ private fun InventoryFormDialog(
                             )
                         )
                     }
-                }
-            ) { Text(if (isEdit) "Update SKU" else "Save SKU") }
+                },
+                modifier = Modifier.testTag("save_inventory_confirm_button")
+            ) { Text(if (isEdit) "Update Stock" else "Save Stock") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )

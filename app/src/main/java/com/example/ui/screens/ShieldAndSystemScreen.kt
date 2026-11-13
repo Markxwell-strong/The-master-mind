@@ -72,7 +72,10 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ShieldAndSystemScreen(viewModel: FocusPulseViewModel) {
+fun ShieldAndSystemScreen(
+    viewModel: FocusPulseViewModel,
+    showHeader: Boolean = true
+) {
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val appRules by viewModel.appRules.collectAsStateWithLifecycle()
     val blockedSites by viewModel.blockedSites.collectAsStateWithLifecycle()
@@ -97,19 +100,21 @@ fun ShieldAndSystemScreen(viewModel: FocusPulseViewModel) {
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Shield, Sleep & System",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
-                )
-                IconButton(onClick = { viewModel.refreshSystemTelemetry() }) {
-                    Icon(Icons.Default.Refresh, contentDescription = "Refresh device telemetry")
+        if (showHeader) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Shield, Sleep & System",
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    IconButton(onClick = { viewModel.refreshSystemTelemetry() }) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Refresh device telemetry")
+                    }
                 }
             }
         }
@@ -170,6 +175,14 @@ fun ShieldAndSystemScreen(viewModel: FocusPulseViewModel) {
                                 granted = perms.notificationsGranted,
                                 onGrant = { notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
                             )
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.openPermissionsPrompt() },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("open_permissions_wizard_button")
+                        ) {
+                            Text("Open All-Permissions Setup Wizard")
                         }
                     }
                 }
@@ -516,6 +529,7 @@ fun ShieldAndSystemScreen(viewModel: FocusPulseViewModel) {
                 )
             }
         }
+        item { Spacer(Modifier.height(72.dp)) }
     }
 
     if (showAddRuleDialog) {

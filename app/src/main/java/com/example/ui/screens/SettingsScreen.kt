@@ -1,10 +1,12 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,25 +25,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.DashboardCustomize
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PrivacyTip
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.ViewModule
 import androidx.compose.material.icons.filled.Wallpaper
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
@@ -68,19 +77,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.UserWorkspaceConfig
-import com.example.system.BackgroundMediaStorage
+import com.example.data.preferences.WallpaperConfig
+import com.example.system.ProfileMediaStorage
 import com.example.system.SupportHelper
-import com.example.ui.components.MasterMindAdaptiveBoard
+import com.example.ui.components.GlassButton
+import com.example.ui.components.GlassCard
+import com.example.ui.components.GlassTopBar
 import com.example.ui.components.MasterMindLayoutOptions
-import com.example.ui.components.PulseCard
 import com.example.ui.components.SectionHeaderRow
+import com.example.ui.theme.BackgroundManager
 import com.example.ui.theme.FocusPalettes
+import com.example.ui.theme.ImmersiveWallpaperCanvas
 import com.example.ui.theme.MasterMindColorPart
 import com.example.ui.theme.MasterMindSwatchPalette
 import com.example.ui.theme.parseHexColorOrNull
@@ -92,12 +108,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
+private val WallpaperScopes = listOf(
+    BackgroundManager.SCOPE_GLOBAL to "All Screens",
+    "home" to "Home",
+    "activities" to "Activities",
+    "intelligence" to "Intelligence",
+    "journal" to "Journal",
+    "settings" to "Settings",
+    "business" to "Business Ops"
+)
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun SettingsScreen(
     viewModel: FocusPulseViewModel,
     onBack: () -> Unit,
     onOpenProfile: () -> Unit,
+    onOpenNotifications: () -> Unit,
+    onOpenBusiness: () -> Unit,
+    onOpenSupport: () -> Unit,
     onSignOut: () -> Unit
 ) {
     BackHandler(onBack = onBack)
@@ -105,11 +134,42 @@ fun SettingsScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+    val appearance by viewModel.appearanceState.collectAsStateWithLifecycle()
+    val notifications by viewModel.notificationsFeed.collectAsStateWithLifecycle()
     val bgRefreshKey by viewModel.customBgRefreshKey.collectAsStateWithLifecycle()
-    val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
+    val profilePhotoRefreshKey by viewModel.profilePhotoRefreshKey.collectAsStateWithLifecycle()
 
-    var hasSavedPhoto by remember(bgRefreshKey) {
-        mutableStateOf(BackgroundMediaStorage.hasCustomBackground(context))
+    val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
+    var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    val uid = viewModel.currentUid
+    LaunchedEffect(profilePhotoRefreshKey, uid) {
+        profileBitmap = withContext(Dispatchers.IO) {
+            ProfileMediaStorage.loadBitmap(context, uid)
+        }
+    }
+    val profileInitial = config.displayName.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "M"
+
+    var selectedScope by remember { mutableStateOf(BackgroundManager.SCOPE_GLOBAL) }
+    val activeScopeWallpaper: WallpaperConfig = remember(appearance, selectedScope) {
+        if (selectedScope == BackgroundManager.SCOPE_GLOBAL) {
+            appearance.globalWallpaper
+        } else {
+            appearance.perScreenWallpapers[selectedScope] ?: appearance.globalWallpaper
+        }
+    }
+    val hasPerScreenOverride = selectedScope != BackgroundManager.SCOPE_GLOBAL &&
+        appearance.perScreenWallpapers.containsKey(selectedScope)
+
+    var hasScopedGalleryPhoto by remember(selectedScope, bgRefreshKey) {
+        mutableStateOf(BackgroundManager.hasGalleryImage(context, selectedScope))
+    }
+
+    fun updateActiveWallpaper(transform: (WallpaperConfig) -> WallpaperConfig) {
+        if (selectedScope == BackgroundManager.SCOPE_GLOBAL) {
+            viewModel.updateGlobalWallpaper(transform)
+        } else {
+            viewModel.updatePerScreenWallpaper(selectedScope, transform)
+        }
     }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
@@ -118,12 +178,15 @@ fun SettingsScreen(
         if (uri != null) {
             scope.launch {
                 val saved = withContext(Dispatchers.IO) {
-                    BackgroundMediaStorage.savePickedImage(context, uri)
+                    BackgroundManager.saveGalleryImage(context, uri, selectedScope)
                 }
                 if (saved) {
-                    hasSavedPhoto = true
-                    viewModel.notifyCustomBackgroundChanged("custom_photo")
-                    viewModel.showStatusMessage("Custom app background updated.")
+                    hasScopedGalleryPhoto = true
+                    updateActiveWallpaper { it.copy(sourceType = "gallery") }
+                    viewModel.showStatusMessage(
+                        if (selectedScope == BackgroundManager.SCOPE_GLOBAL) "Custom global wallpaper applied."
+                        else "Custom wallpaper set for ${selectedScope.replaceFirstChar { it.uppercase() }}."
+                    )
                 } else {
                     viewModel.showStatusMessage("Could not load selected picture.")
                 }
@@ -131,11 +194,46 @@ fun SettingsScreen(
         }
     }
 
-    var selectedPart by remember { mutableStateOf(MasterMindColorPart.PRIMARY) }
+    // Draft sliders for smooth real-time preview before DataStore commit
+    var zoomDraft by remember(selectedScope, activeScopeWallpaper.cropScale) {
+        mutableFloatStateOf(activeScopeWallpaper.cropScale)
+    }
+    var offsetXDraft by remember(selectedScope, activeScopeWallpaper.offsetX) {
+        mutableFloatStateOf(activeScopeWallpaper.offsetX)
+    }
+    var offsetYDraft by remember(selectedScope, activeScopeWallpaper.offsetY) {
+        mutableFloatStateOf(activeScopeWallpaper.offsetY)
+    }
+    var brightnessDraft by remember(selectedScope, activeScopeWallpaper.brightness) {
+        mutableFloatStateOf(activeScopeWallpaper.brightness)
+    }
+    var blurDraft by remember(selectedScope, activeScopeWallpaper.blurDp) {
+        mutableFloatStateOf(activeScopeWallpaper.blurDp)
+    }
+    var overlayDraft by remember(selectedScope, activeScopeWallpaper.overlayOpacity) {
+        mutableFloatStateOf(activeScopeWallpaper.overlayOpacity)
+    }
+    var glassOpacityDraft by remember(appearance.glassOpacity) {
+        mutableFloatStateOf(appearance.glassOpacity)
+    }
+    var radiusDraft by remember(appearance.cornerRadiusDp) {
+        mutableFloatStateOf(appearance.cornerRadiusDp.toFloat())
+    }
 
+    val livePreviewWallpaper = activeScopeWallpaper.copy(
+        cropScale = zoomDraft,
+        offsetX = offsetXDraft,
+        offsetY = offsetYDraft,
+        brightness = brightnessDraft,
+        blurDp = blurDraft,
+        overlayOpacity = overlayDraft
+    )
+
+    // Color-by-parts state
+    var selectedPart by remember { mutableStateOf(MasterMindColorPart.PRIMARY) }
     val fallbackColorForSelected = when (selectedPart) {
         MasterMindColorPart.BACKGROUND -> MaterialTheme.colorScheme.background
-        MasterMindColorPart.SURFACE -> MaterialTheme.colorScheme.surfaceContainerLow
+        MasterMindColorPart.SURFACE -> MaterialTheme.colorScheme.surface
         MasterMindColorPart.PRIMARY -> MaterialTheme.colorScheme.primary
         MasterMindColorPart.SECONDARY -> MaterialTheme.colorScheme.secondary
         MasterMindColorPart.TERTIARY -> MaterialTheme.colorScheme.tertiary
@@ -145,8 +243,7 @@ fun SettingsScreen(
         MasterMindColorPart.CARD_BORDER -> MaterialTheme.colorScheme.outline
         MasterMindColorPart.BUTTON_TEXT -> MaterialTheme.colorScheme.onPrimary
     }
-
-    val activePartColor = parseHexColorOrNull(config.partColors[selectedPart.key])
+    val activePartColor = parseHexColorOrNull(appearance.partColors[selectedPart.key])
         ?: fallbackColorForSelected
 
     var rSlider by remember(selectedPart, activePartColor) { mutableFloatStateOf(activePartColor.red) }
@@ -154,94 +251,177 @@ fun SettingsScreen(
     var bSlider by remember(selectedPart, activePartColor) { mutableFloatStateOf(activePartColor.blue) }
     var hexDraft by remember(selectedPart, activePartColor) { mutableStateOf(activePartColor.toHexRgb()) }
 
-    LaunchedEffect(config.partColors[selectedPart.key], selectedPart) {
-        val current = parseHexColorOrNull(config.partColors[selectedPart.key]) ?: fallbackColorForSelected
+    LaunchedEffect(appearance.partColors[selectedPart.key], selectedPart) {
+        val current = parseHexColorOrNull(appearance.partColors[selectedPart.key]) ?: fallbackColorForSelected
         rSlider = current.red
         gSlider = current.green
         bSlider = current.blue
         hexDraft = current.toHexRgb()
     }
 
-    val blocks: List<@Composable (Modifier) -> Unit> = listOf(
-        // 1. Developer Support Card (WhatsApp)
-        { mod ->
-            PulseCard(modifier = mod, accentBorder = true) {
-                SectionHeaderRow(
-                    title = "Developer Support",
-                    subtitle = "Direct WhatsApp help for issues, bugs or custom requests",
-                    icon = Icons.Default.SupportAgent
-                )
-                Text(
-                    text = "Need help or spotted an issue? Message the developer directly on WhatsApp (${SupportHelper.DEVELOPER_WHATSAPP_RAW}).",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Button(
-                    onClick = { SupportHelper.openDeveloperWhatsApp(context) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("settings_whatsapp_support_button")
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("Chat with Developer on WhatsApp")
-                }
-            }
-        },
+    var presetNameDraft by remember { mutableStateOf("") }
+    var showClearIntelConfirm by remember { mutableStateOf(false) }
 
-        // 2. Whole-App Background & Custom Photo Studio
-        { mod ->
-            PulseCard(modifier = mod) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        item {
+            GlassTopBar(
+                title = "Glass & Intelligence Settings",
+                subtitle = "Wallpapers, presets, widgets, privacy & support",
+                profileInitial = profileInitial,
+                profileBitmap = profileBitmap,
+                unreadNotifications = notifications.size,
+                onOpenProfile = onOpenProfile,
+                onOpenNotifications = onOpenNotifications
+            )
+        }
+
+        // 1. Immersive Wallpaper & Glassmorphism Studio
+        item {
+            GlassCard(accentBorder = true) {
                 SectionHeaderRow(
-                    title = "Whole-App Background Studio",
-                    subtitle = "Set a solid gradient, nebula art or your own gallery photo",
+                    title = "Background & Glass Studio",
+                    subtitle = "Apply globally or customize each screen independently",
                     icon = Icons.Default.Wallpaper
                 )
-                Text("Brightness Mode", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("dark" to "Dark", "amoled" to "AMOLED Black", "light" to "Light", "system" to "System").forEach { (id, lbl) ->
+
+                Text("Target Screen Scope", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    WallpaperScopes.forEach { (scopeKey, label) ->
+                        val isCustom = scopeKey != BackgroundManager.SCOPE_GLOBAL &&
+                            appearance.perScreenWallpapers.containsKey(scopeKey)
                         FilterChip(
-                            selected = config.darkModePreference == id,
-                            onClick = { viewModel.updateWorkspaceConfig { it.copy(darkModePreference = id) } },
-                            label = { Text(lbl) }
+                            selected = selectedScope == scopeKey,
+                            onClick = { selectedScope = scopeKey },
+                            label = { Text(if (isCustom) "$label •" else label) },
+                            modifier = Modifier.testTag("wallpaper_scope_$scopeKey")
                         )
                     }
                 }
 
-                Text("Background Source", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = config.backgroundPreset == "none",
-                        onClick = { viewModel.notifyCustomBackgroundChanged("none") },
-                        label = { Text("Solid Gradient") }
-                    )
-                    FilterChip(
-                        selected = config.backgroundPreset == "pulse_nebula",
-                        onClick = { viewModel.notifyCustomBackgroundChanged("pulse_nebula") },
-                        label = { Text("Nebula Art") }
-                    )
-                    FilterChip(
-                        selected = config.backgroundPreset == "custom_photo",
-                        onClick = {
-                            if (hasSavedPhoto) {
-                                viewModel.notifyCustomBackgroundChanged("custom_photo")
-                            } else {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            }
-                        },
-                        label = { Text("Custom Photo") },
-                        leadingIcon = { Icon(Icons.Default.Image, null, Modifier.size(16.dp)) }
-                    )
+                if (hasPerScreenOverride) {
+                    OutlinedButton(
+                        onClick = { viewModel.clearPerScreenWallpaper(selectedScope) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.RestartAlt, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Inherit Global Wallpaper for ${selectedScope.replaceFirstChar { it.uppercase() }}")
+                    }
                 }
 
+                // Live Preview Frame
+                Text("Live Glass Preview", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .clip(RoundedCornerShape(18.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(18.dp))
+                ) {
+                    ImmersiveWallpaperCanvas(
+                        wallpaper = livePreviewWallpaper,
+                        screenKey = selectedScope,
+                        refreshKey = bgRefreshKey,
+                        isPreview = true,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                    GlassCard(
+                        contentPadding = 12.dp,
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "THE MASTER MIND Glass",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Blur ${blurDraft.roundToInt()}dp • Scrim ${(overlayDraft * 100).roundToInt()}% • Zoom ${String.format("%.1fx", zoomDraft)}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Surface(
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.24f),
+                                shape = RoundedCornerShape(999.dp)
+                            ) {
+                                Text(
+                                    text = "LIVE",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Built-in Wallpaper Library
+                Text("Built-In Wallpaper Library", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(BackgroundManager.builtInWallpapers, key = { it.id }) { wall ->
+                        val isSelected = activeScopeWallpaper.sourceType == "built_in" &&
+                            activeScopeWallpaper.builtInId == wall.id
+                        Column(
+                            modifier = Modifier
+                                .width(116.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .border(
+                                    width = if (isSelected) 2.5.dp else 1.dp,
+                                    color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                                    shape = RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    updateActiveWallpaper {
+                                        it.copy(sourceType = "built_in", builtInId = wall.id)
+                                    }
+                                }
+                                .padding(6.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Image(
+                                painter = painterResource(id = wall.drawableRes),
+                                contentDescription = wall.title,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(64.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                            )
+                            Text(
+                                text = wall.title,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+
+                // Gallery & Ambient Gradient buttons
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Button(
+                    GlassButton(
+                        text = if (hasScopedGalleryPhoto) "Change Gallery Photo" else "Pick Gallery Photo",
+                        icon = Icons.Default.Image,
                         onClick = {
                             photoPickerLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -250,112 +430,239 @@ fun SettingsScreen(
                         modifier = Modifier
                             .weight(1f)
                             .testTag("pick_background_photo_button")
-                    ) {
-                        Icon(Icons.Default.Image, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (hasSavedPhoto) "Change Picture" else "Pick Custom Picture")
-                    }
-
-                    if (hasSavedPhoto) {
+                    )
+                    if (hasScopedGalleryPhoto) {
                         OutlinedButton(
                             onClick = {
                                 scope.launch {
                                     withContext(Dispatchers.IO) {
-                                        BackgroundMediaStorage.clearCustomBackground(context)
+                                        BackgroundManager.deleteGalleryImage(context, selectedScope)
                                     }
-                                    hasSavedPhoto = false
-                                    viewModel.notifyCustomBackgroundChanged("none")
-                                    viewModel.showStatusMessage("Custom background removed.")
+                                    hasScopedGalleryPhoto = false
+                                    updateActiveWallpaper { it.copy(sourceType = "built_in") }
+                                    viewModel.showStatusMessage("Gallery photo removed.")
                                 }
                             },
-                            modifier = Modifier.testTag("clear_background_photo_button")
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("clear_background_photo_button")
                         ) {
-                            Icon(Icons.Default.DeleteOutline, contentDescription = "Remove picture")
+                            Icon(Icons.Default.DeleteOutline, contentDescription = "Remove photo")
                         }
                     }
                 }
 
-                if (config.backgroundPreset != "none") {
-                    var overlayAlphaDraft by remember(config.backgroundOverlayAlpha) {
-                        mutableFloatStateOf(config.backgroundOverlayAlpha.toFloat())
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(
+                        selected = activeScopeWallpaper.sourceType == "gradient",
+                        onClick = { updateActiveWallpaper { it.copy(sourceType = "gradient") } },
+                        label = { Text("Ambient Gradient") }
+                    )
+                    if (hasScopedGalleryPhoto) {
+                        FilterChip(
+                            selected = activeScopeWallpaper.sourceType == "gallery",
+                            onClick = { updateActiveWallpaper { it.copy(sourceType = "gallery") } },
+                            label = { Text("Saved Gallery Photo") }
+                        )
                     }
-                    Text(
-                        text = "Backdrop Scrim Dimming (${(overlayAlphaDraft * 100).roundToInt()}%)",
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                    Slider(
-                        value = overlayAlphaDraft,
-                        onValueChange = { overlayAlphaDraft = it },
-                        onValueChangeFinished = {
-                            viewModel.updateWorkspaceConfig { it.copy(backgroundOverlayAlpha = overlayAlphaDraft.toDouble()) }
-                        },
-                        valueRange = 0.08f..0.92f
-                    )
                 }
 
-                var cardOpacityDraft by remember(config.cardOpacity) {
-                    mutableFloatStateOf(config.cardOpacity.toFloat())
-                }
-                Text(
-                    text = "Card Glass Opacity (${(cardOpacityDraft * 100).roundToInt()}%)",
-                    style = MaterialTheme.typography.labelMedium
-                )
+                HorizontalDivider()
+
+                // Position, Crop, Brightness, Blur, Overlay & Glass Opacity Sliders
+                Text("Crop Zoom (${String.format("%.2fx", zoomDraft)})", style = MaterialTheme.typography.labelMedium)
                 Slider(
-                    value = cardOpacityDraft,
-                    onValueChange = { cardOpacityDraft = it },
+                    value = zoomDraft,
+                    onValueChange = { zoomDraft = it },
+                    onValueChangeFinished = { updateActiveWallpaper { it.copy(cropScale = zoomDraft) } },
+                    valueRange = 1.0f..2.2f
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Pan X (${(offsetXDraft * 100).roundToInt()}%)", style = MaterialTheme.typography.labelSmall)
+                        Slider(
+                            value = offsetXDraft,
+                            onValueChange = { offsetXDraft = it },
+                            onValueChangeFinished = { updateActiveWallpaper { it.copy(offsetX = offsetXDraft) } },
+                            valueRange = -1.0f..1.0f
+                        )
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Pan Y (${(offsetYDraft * 100).roundToInt()}%)", style = MaterialTheme.typography.labelSmall)
+                        Slider(
+                            value = offsetYDraft,
+                            onValueChange = { offsetYDraft = it },
+                            onValueChangeFinished = { updateActiveWallpaper { it.copy(offsetY = offsetYDraft) } },
+                            valueRange = -1.0f..1.0f
+                        )
+                    }
+                }
+
+                Text("Wallpaper Brightness (${(brightnessDraft * 100).roundToInt()}%)", style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = brightnessDraft,
+                    onValueChange = { brightnessDraft = it },
+                    onValueChangeFinished = { updateActiveWallpaper { it.copy(brightness = brightnessDraft) } },
+                    valueRange = 0.45f..1.45f
+                )
+
+                Text("Wallpaper Blur (${blurDraft.roundToInt()}dp)", style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = blurDraft,
+                    onValueChange = { blurDraft = it },
+                    onValueChangeFinished = { updateActiveWallpaper { it.copy(blurDp = blurDraft) } },
+                    valueRange = 0f..28f
+                )
+
+                Text("Dimming Overlay Opacity (${(overlayDraft * 100).roundToInt()}%)", style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = overlayDraft,
+                    onValueChange = { overlayDraft = it },
+                    onValueChangeFinished = { updateActiveWallpaper { it.copy(overlayOpacity = overlayDraft) } },
+                    valueRange = 0.05f..0.90f
+                )
+
+                Text("Frosted Glass Card Opacity (${(glassOpacityDraft * 100).roundToInt()}%)", style = MaterialTheme.typography.labelMedium)
+                Slider(
+                    value = glassOpacityDraft,
+                    onValueChange = { glassOpacityDraft = it },
                     onValueChangeFinished = {
-                        viewModel.updateWorkspaceConfig { it.copy(cardOpacity = cardOpacityDraft.toDouble()) }
+                        viewModel.updateAppearance { it.copy(glassOpacity = glassOpacityDraft) }
                     },
-                    valueRange = 0.40f..1.0f
+                    valueRange = 0.20f..0.88f
                 )
             }
-        },
+        }
 
-        // 3. Color Everywhere (By Parts) Studio
-        { mod ->
-            PulseCard(modifier = mod, accentBorder = config.partColors.isNotEmpty()) {
+        // 2. Theme Mode, Presets & Reset
+        item {
+            GlassCard {
                 SectionHeaderRow(
-                    title = "Color By Parts Studio",
-                    subtitle = "Tabs shift colors per view by default; customize any part below",
+                    title = "Theme Presets & Brightness Mode",
+                    subtitle = "Save and switch complete glass styles cleanly",
+                    icon = Icons.Default.BookmarkAdd,
+                    trailing = {
+                        TextButton(
+                            onClick = { viewModel.resetAppearancePreferences() },
+                            modifier = Modifier.testTag("reset_appearance_button")
+                        ) {
+                            Icon(Icons.Default.RestartAlt, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("Reset")
+                        }
+                    }
+                )
+
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("dark" to "Dark", "amoled" to "AMOLED", "light" to "Light", "system" to "System").forEach { (id, lbl) ->
+                        FilterChip(
+                            selected = appearance.darkModePreference == id,
+                            onClick = {
+                                viewModel.updateAppearance { it.copy(darkModePreference = id) }
+                            },
+                            label = { Text(lbl) }
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = presetNameDraft,
+                        onValueChange = { presetNameDraft = it },
+                        label = { Text("New Preset Name") },
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Button(
+                        onClick = {
+                            viewModel.saveThemePreset(presetNameDraft.ifBlank { "My Glass Preset" })
+                            presetNameDraft = ""
+                        },
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("save_theme_preset_button")
+                    ) {
+                        Text("Save")
+                    }
+                }
+
+                if (appearance.savedPresets.isNotEmpty()) {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(appearance.savedPresets, key = { it.id }) { preset ->
+                            Surface(
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f),
+                                shape = RoundedCornerShape(14.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    TextButton(onClick = { viewModel.applyThemePreset(preset) }) {
+                                        Text(preset.name, fontWeight = FontWeight.SemiBold)
+                                    }
+                                    IconButton(onClick = { viewModel.deleteThemePreset(preset.id) }) {
+                                        Icon(Icons.Default.DeleteOutline, contentDescription = "Delete preset")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Accent Palettes & Color-By-Parts Studio
+        item {
+            GlassCard(accentBorder = appearance.partColors.isNotEmpty()) {
+                SectionHeaderRow(
+                    title = "Accent & Color By Parts",
+                    subtitle = "Tabs shift subtly by default; fine-tune any UI element",
                     icon = Icons.Default.ColorLens,
                     trailing = {
-                        if (config.partColors.isNotEmpty()) {
+                        if (appearance.partColors.isNotEmpty()) {
                             TextButton(
-                                onClick = { viewModel.resetAllPartColors() },
+                                onClick = {
+                                    viewModel.updateAppearance { it.copy(partColors = emptyMap()) }
+                                },
                                 modifier = Modifier.testTag("reset_all_colors_button")
                             ) {
-                                Icon(Icons.Default.RestartAlt, null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Reset All")
+                                Text("Clear Colors")
                             }
                         }
                     }
                 )
 
-                Text("Base Preset Palette", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("Accent Palette", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     FocusPalettes.forEach { pal ->
                         FilterChip(
-                            selected = config.themePalette == pal.id,
-                            onClick = { viewModel.updateWorkspaceConfig { it.copy(themePalette = pal.id) } },
+                            selected = appearance.themePalette == pal.id,
+                            onClick = { viewModel.updateAppearance { it.copy(themePalette = pal.id) } },
                             label = { Text(pal.label) }
                         )
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                HorizontalDivider()
 
-                Text("Select Element To Recolor", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("Target Part", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     MasterMindColorPart.entries.forEach { part ->
-                        val hasCustom = config.partColors.containsKey(part.key)
-                        val dotColor = parseHexColorOrNull(config.partColors[part.key])
+                        val hasCustom = appearance.partColors.containsKey(part.key)
+                        val dotColor = parseHexColorOrNull(appearance.partColors[part.key])
                         FilterChip(
                             selected = selectedPart == part,
                             onClick = { selectedPart = part },
@@ -373,50 +680,11 @@ fun SettingsScreen(
                             } else null,
                             trailingIcon = if (hasCustom) {
                                 { Icon(Icons.Default.Check, null, Modifier.size(14.dp)) }
-                            } else null,
-                            modifier = Modifier.testTag("color_part_chip_${part.key}")
+                            } else null
                         )
                     }
                 }
 
-                // Live Preview Box for selected part
-                Surface(
-                    color = MaterialTheme.colorScheme.surfaceContainerLow,
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = "Editing: ${selectedPart.label}",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            Text(
-                                text = selectedPart.hint,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Button(
-                            onClick = {},
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            )
-                        ) {
-                            Text("Preview")
-                        }
-                    }
-                }
-
-                Text("Quick Color Swatches", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 FlowRow(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
@@ -439,15 +707,17 @@ fun SettingsScreen(
                                     gSlider = swatch.green
                                     bSlider = swatch.blue
                                     hexDraft = swatchHex
-                                    viewModel.updatePartColor(selectedPart.key, swatchHex)
+                                    viewModel.updateAppearance { st ->
+                                        st.copy(partColors = st.partColors + (selectedPart.key to swatchHex))
+                                    }
                                 },
                             contentAlignment = Alignment.Center
                         ) {
                             if (isCurrent) {
-                                val lum = (swatch.red * 0.299f + swatch.green * 0.587f + swatch.blue * 0.114f)
+                                val lum = swatch.red * 0.299f + swatch.green * 0.587f + swatch.blue * 0.114f
                                 Icon(
                                     imageVector = Icons.Default.Check,
-                                    contentDescription = "Selected color $swatchHex",
+                                    contentDescription = "Selected $swatchHex",
                                     tint = if (lum > 0.55f) Color.Black else Color.White,
                                     modifier = Modifier.size(16.dp)
                                 )
@@ -456,19 +726,18 @@ fun SettingsScreen(
                     }
                 }
 
-                // RGB fine-tune sliders
-                Text("Fine-Tune Shades (${Color(rSlider, gSlider, bSlider).toHexRgb()})", style = MaterialTheme.typography.labelMedium)
+                Text("RGB Fine-Tune (${Color(rSlider, gSlider, bSlider).toHexRgb()})", style = MaterialTheme.typography.labelMedium)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("R", modifier = Modifier.width(20.dp), fontWeight = FontWeight.Bold)
                     Slider(
                         value = rSlider,
-                        onValueChange = { r ->
-                            rSlider = r
-                            val hex = Color(r, gSlider, bSlider).toHexRgb()
-                            hexDraft = hex
+                        onValueChange = {
+                            rSlider = it
+                            hexDraft = Color(it, gSlider, bSlider).toHexRgb()
                         },
                         onValueChangeFinished = {
-                            viewModel.updatePartColor(selectedPart.key, Color(rSlider, gSlider, bSlider).toHexRgb())
+                            val hex = Color(rSlider, gSlider, bSlider).toHexRgb()
+                            viewModel.updateAppearance { st -> st.copy(partColors = st.partColors + (selectedPart.key to hex)) }
                         },
                         modifier = Modifier.weight(1f)
                     )
@@ -477,13 +746,13 @@ fun SettingsScreen(
                     Text("G", modifier = Modifier.width(20.dp), fontWeight = FontWeight.Bold)
                     Slider(
                         value = gSlider,
-                        onValueChange = { g ->
-                            gSlider = g
-                            val hex = Color(rSlider, g, bSlider).toHexRgb()
-                            hexDraft = hex
+                        onValueChange = {
+                            gSlider = it
+                            hexDraft = Color(rSlider, it, bSlider).toHexRgb()
                         },
                         onValueChangeFinished = {
-                            viewModel.updatePartColor(selectedPart.key, Color(rSlider, gSlider, bSlider).toHexRgb())
+                            val hex = Color(rSlider, gSlider, bSlider).toHexRgb()
+                            viewModel.updateAppearance { st -> st.copy(partColors = st.partColors + (selectedPart.key to hex)) }
                         },
                         modifier = Modifier.weight(1f)
                     )
@@ -492,13 +761,13 @@ fun SettingsScreen(
                     Text("B", modifier = Modifier.width(20.dp), fontWeight = FontWeight.Bold)
                     Slider(
                         value = bSlider,
-                        onValueChange = { b ->
-                            bSlider = b
-                            val hex = Color(rSlider, gSlider, b).toHexRgb()
-                            hexDraft = hex
+                        onValueChange = {
+                            bSlider = it
+                            hexDraft = Color(rSlider, gSlider, it).toHexRgb()
                         },
                         onValueChangeFinished = {
-                            viewModel.updatePartColor(selectedPart.key, Color(rSlider, gSlider, bSlider).toHexRgb())
+                            val hex = Color(rSlider, gSlider, bSlider).toHexRgb()
+                            viewModel.updateAppearance { st -> st.copy(partColors = st.partColors + (selectedPart.key to hex)) }
                         },
                         modifier = Modifier.weight(1f)
                     )
@@ -520,84 +789,56 @@ fun SettingsScreen(
                         onClick = {
                             val parsed = parseHexColorOrNull(hexDraft)
                             if (parsed != null) {
-                                viewModel.updatePartColor(selectedPart.key, parsed.toHexRgb())
+                                val hex = parsed.toHexRgb()
+                                viewModel.updateAppearance { st -> st.copy(partColors = st.partColors + (selectedPart.key to hex)) }
                             } else {
                                 viewModel.showStatusMessage("Use #RRGGBB format, e.g. #10B981")
                             }
                         }
-                    ) {
-                        Text("Apply")
-                    }
-                    if (config.partColors.containsKey(selectedPart.key)) {
-                        OutlinedButton(onClick = { viewModel.updatePartColor(selectedPart.key, null) }) {
-                            Text("Reset")
-                        }
+                    ) { Text("Apply") }
+                    if (appearance.partColors.containsKey(selectedPart.key)) {
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.updateAppearance { st ->
+                                    st.copy(partColors = st.partColors - selectedPart.key)
+                                }
+                            }
+                        ) { Text("Reset") }
                     }
                 }
             }
-        },
+        }
 
-        // 4. App Layout & Navigation Architecture
-        { mod ->
-            PulseCard(modifier = mod) {
+        // 4. Layout, Corner Roundness & Widget Order
+        item {
+            GlassCard {
                 SectionHeaderRow(
-                    title = "App Layout & Navigation Shell",
-                    subtitle = "Switch freely between grids, carousels, tiles or streams",
+                    title = "Layout & Dashboard Widgets",
+                    subtitle = "Customize board layout, card shape & widget ordering",
                     icon = Icons.Default.ViewModule
                 )
+
                 Text("Board Layout Style", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MasterMindLayoutOptions.forEach { layoutOpt ->
                         FilterChip(
-                            selected = config.appLayoutStyle == layoutOpt.id,
-                            onClick = { viewModel.updateWorkspaceConfig { it.copy(appLayoutStyle = layoutOpt.id) } },
-                            label = { Text(layoutOpt.title) },
-                            modifier = Modifier.testTag("layout_style_${layoutOpt.id}")
+                            selected = appearance.appLayoutStyle == layoutOpt.id,
+                            onClick = {
+                                viewModel.updateAppearance { it.copy(appLayoutStyle = layoutOpt.id) }
+                            },
+                            label = { Text(layoutOpt.title) }
                         )
                     }
                 }
 
-                Text("Navigation Shell Style", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        "bottom_bar" to "Docked Bar",
-                        "floating_dock" to "Floating Capsule",
-                        "side_rail" to "Side Rail"
-                    ).forEach { (id, lbl) ->
-                        FilterChip(
-                            selected = config.navBarStyle == id,
-                            onClick = { viewModel.updateWorkspaceConfig { it.copy(navBarStyle = id) } },
-                            label = { Text(lbl) },
-                            modifier = Modifier.testTag("nav_style_$id")
-                        )
-                    }
-                }
-
-                Text("Card Surface Style", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("elevated" to "Elevated", "outlined" to "Outlined", "tonal" to "Tonal").forEach { (id, lbl) ->
-                        FilterChip(
-                            selected = config.cardStyle == id,
-                            onClick = { viewModel.updateWorkspaceConfig { it.copy(cardStyle = id) } },
-                            label = { Text(lbl) }
-                        )
-                    }
-                }
-
-                var radiusDraft by remember(config.cornerRadiusDp) {
-                    mutableFloatStateOf(config.cornerRadiusDp.toFloat())
-                }
-                Text("Corner Roundness: ${radiusDraft.roundToInt()}dp", style = MaterialTheme.typography.labelMedium)
+                Text("Card Corner Roundness: ${radiusDraft.roundToInt()}dp", style = MaterialTheme.typography.labelMedium)
                 Slider(
                     value = radiusDraft,
                     onValueChange = { radiusDraft = it },
                     onValueChangeFinished = {
-                        viewModel.updateWorkspaceConfig { it.copy(cornerRadiusDp = radiusDraft.roundToInt().toLong()) }
+                        viewModel.updateAppearance { it.copy(cornerRadiusDp = radiusDraft.roundToInt()) }
                     },
-                    valueRange = 4f..28f
+                    valueRange = 8f..28f
                 )
 
                 Row(
@@ -608,56 +849,93 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Compact Spacing Density", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Tighter padding to show more cards on screen",
+                            "Tighter spacing to reveal more glass panels at once",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
-                        checked = config.compactDensity,
+                        checked = appearance.compactDensity,
                         onCheckedChange = { compact ->
-                            viewModel.updateWorkspaceConfig { it.copy(compactDensity = compact) }
+                            viewModel.updateAppearance { it.copy(compactDensity = compact) }
                         }
                     )
                 }
-            }
-        },
 
-        // 5. Command Modules & AI Coach
-        { mod ->
-            PulseCard(modifier = mod) {
-                SectionHeaderRow(
-                    title = "Command Modules & AI Coach",
-                    subtitle = "Choose which widgets appear on your home board",
-                    icon = Icons.Default.DashboardCustomize
-                )
-                val allWidgets = listOf(
-                    "doomscroll_shield" to "Doomscroll Shield",
-                    "sleep_optimizer" to "Sleep Optimizer",
-                    "inventory_alerts" to "Inventory & Profit",
-                    "diary_ai" to "Voice Diary & AI"
-                )
-                allWidgets.forEach { (wId, label) ->
-                    val enabled = wId in config.enabledWidgets
+                HorizontalDivider()
+                Text("Home Dashboard Widgets", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                appearance.dashboardWidgets.forEachIndexed { idx, w ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(label)
+                        Text(
+                            text = w.title,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        IconButton(
+                            onClick = { viewModel.moveDashboardWidget(w.id, -1) },
+                            enabled = idx > 0
+                        ) {
+                            Icon(Icons.Default.ArrowUpward, contentDescription = "Move up")
+                        }
+                        IconButton(
+                            onClick = { viewModel.moveDashboardWidget(w.id, 1) },
+                            enabled = idx < appearance.dashboardWidgets.lastIndex
+                        ) {
+                            Icon(Icons.Default.ArrowDownward, contentDescription = "Move down")
+                        }
                         Switch(
-                            checked = enabled,
-                            onCheckedChange = { checked ->
-                                val next = if (checked) (config.enabledWidgets + wId).distinct()
-                                else config.enabledWidgets - wId
-                                viewModel.updateWorkspaceConfig { it.copy(enabledWidgets = next) }
-                            }
+                            checked = w.visible,
+                            onCheckedChange = { viewModel.toggleDashboardWidget(w.id) }
+                        )
+                    }
+                }
+            }
+        }
+
+        // 5. AI Intelligence, Privacy & Retention Controls
+        item {
+            GlassCard {
+                SectionHeaderRow(
+                    title = "AI Intelligence & Data Privacy",
+                    subtitle = "Pause collection anytime or adjust local retention window",
+                    icon = Icons.Default.PrivacyTip
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Evidence-Based Activity Monitoring", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Tracks permitted UsageStats app durations, launches, habits & focus logs on-device",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = appearance.monitoringEnabled,
+                        onCheckedChange = { viewModel.setMonitoringEnabled(it) },
+                        modifier = Modifier.testTag("monitoring_enabled_switch")
+                    )
+                }
+
+                Text("Local Telemetry Retention Window", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(7, 30, 90, 365).forEach { days ->
+                        FilterChip(
+                            selected = appearance.retentionDays == days,
+                            onClick = { viewModel.setRetentionDays(days) },
+                            label = { Text("$days days") }
                         )
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                Text("AI Buddy Coaching Style", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                Text("AI Coaching Persona", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf("balanced", "strict", "zen", "business").forEach { persona ->
                         FilterChip(
@@ -668,88 +946,124 @@ fun SettingsScreen(
                         )
                     }
                 }
-            }
-        },
 
-        // 6. Profile, Cloud Sync & Session
-        { mod ->
-            PulseCard(modifier = mod) {
+                OutlinedButton(
+                    onClick = { showClearIntelConfirm = true },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("clear_intelligence_data_button")
+                ) {
+                    Icon(Icons.Default.DeleteOutline, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Clear Stored Patterns, Memory & Telemetry")
+                }
+            }
+        }
+
+        // 6. Business Ops, Permissions, Profile & Developer Support
+        item {
+            GlassCard {
                 SectionHeaderRow(
-                    title = "Profile & Cloud Sync",
-                    subtitle = "Synced as ${config.displayName.ifBlank { "Member" }} • ${config.lastActiveDevice.ifBlank { "This Device" }}",
+                    title = "Modules, Permissions & Support",
+                    subtitle = "Access Business Ops, permissions wizard, profile & developer help",
                     icon = Icons.Default.Tune
                 )
-                Button(
+
+                GlassButton(
+                    text = "Open Stock & Profit Table",
+                    icon = Icons.Default.Inventory2,
+                    onClick = onOpenBusiness,
+                    tonal = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("settings_open_business_button")
+                )
+
+                OutlinedButton(
+                    onClick = { viewModel.openPermissionsPrompt() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("settings_permissions_button")
+                ) {
+                    Icon(Icons.Default.Security, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Review System Permissions & Usage Access")
+                }
+
+                OutlinedButton(
                     onClick = onOpenProfile,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                         .testTag("settings_open_profile_button")
                 ) {
-                    Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Person, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Open Profile Picture & Sync")
+                    Text("Profile Picture, Admin & Cloud Sync")
                 }
+
+                Button(
+                    onClick = onOpenSupport,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("settings_support_triage_button")
+                ) {
+                    Icon(Icons.Default.SupportAgent, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("AI Troubleshooting & Developer Support")
+                }
+
+                OutlinedButton(
+                    onClick = { SupportHelper.openDeveloperWhatsApp(context) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("settings_whatsapp_support_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Chat, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Direct WhatsApp (${SupportHelper.DEVELOPER_WHATSAPP_RAW})")
+                }
+
                 OutlinedButton(
                     onClick = onSignOut,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                         .testTag("settings_sign_out_button")
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Logout, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Icon(Icons.AutoMirrored.Filled.Logout, null, Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Sign Out & Switch Account")
                 }
             }
         }
-    )
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("settings_back_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back"
-                    )
-                }
-                Icon(
-                    imageVector = Icons.Default.Palette,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Workspace Settings",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Backgrounds, per-part colors, layouts & developer help",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+        item { Spacer(Modifier.height(72.dp)) }
+    }
+
+    if (showClearIntelConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearIntelConfirm = false },
+            title = { Text("Clear Local AI Memory?") },
+            text = {
+                Text("This removes locally recorded usage summaries, behavioural patterns, active insights, and AI memory entries. Cloud-synced habits, notes, diary entries, and shop inventory remain safe.")
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        viewModel.clearAllIntelligenceData()
+                        showClearIntelConfirm = false
+                    }
+                ) { Text("Clear Local Data") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearIntelConfirm = false }) { Text("Cancel") }
             }
-        }
-
-        item {
-            MasterMindAdaptiveBoard(
-                layoutStyle = config.appLayoutStyle,
-                blocks = blocks
-            )
-        }
+        )
     }
 }

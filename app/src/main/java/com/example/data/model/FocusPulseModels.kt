@@ -11,6 +11,8 @@ data class UserWorkspaceConfig(
     @DocumentId val id: String = "",
     val userId: String = "",
     val displayName: String = "",
+    val email: String = "",
+    val role: String = "member",
     val activeDashboardId: String = "command_center",
     val themePalette: String = "emerald",
     val darkModePreference: String = "dark",
@@ -61,6 +63,8 @@ data class UserWorkspaceConfig(
     fun toCreateMap(uid: String, deviceName: String): Map<String, Any> = mapOf(
         "userId" to uid,
         "displayName" to displayName.take(80),
+        "email" to email.trim().lowercase().take(120),
+        "role" to if (role == "admin") "admin" else "member",
         "activeDashboardId" to activeDashboardId,
         "themePalette" to themePalette,
         "darkModePreference" to darkModePreference,
@@ -92,6 +96,8 @@ data class UserWorkspaceConfig(
 
     fun toUpdateMap(deviceName: String): Map<String, Any> = mapOf(
         "displayName" to displayName.take(80),
+        "email" to email.trim().lowercase().take(120),
+        "role" to if (role == "admin") "admin" else "member",
         "activeDashboardId" to activeDashboardId,
         "themePalette" to themePalette,
         "darkModePreference" to darkModePreference,
@@ -292,6 +298,21 @@ data class InventoryItem(
     val isLowStock: Boolean
         get() = stockQty <= lowStockThreshold
 
+    val hasBuyingAndSellingPrice: Boolean
+        get() = unitCost > 0.0 && unitPrice > 0.0
+
+    val profitPerUnit: Double
+        get() = if (hasBuyingAndSellingPrice) unitPrice - unitCost else 0.0
+
+    val profitMarginPercent: Double
+        get() = if (hasBuyingAndSellingPrice) ((unitPrice - unitCost) / unitPrice) * 100.0 else 0.0
+
+    val markupPercent: Double
+        get() = if (hasBuyingAndSellingPrice) ((unitPrice - unitCost) / unitCost) * 100.0 else 0.0
+
+    val expectedStockProfit: Double
+        get() = if (hasBuyingAndSellingPrice) stockQty * (unitPrice - unitCost) else 0.0
+
     val totalValuation: Double
         get() = stockQty * unitCost
 
@@ -433,6 +454,34 @@ data class FocusSession(
         "mode" to mode,
         "completed" to completed,
         "distractionsBlocked" to distractionsBlocked.coerceIn(0L, 10000L),
+        "createdAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+}
+
+@IgnoreExtraProperties
+data class SupportTicket(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val userEmail: String = "",
+    val category: String = "support",
+    val message: String = "",
+    val aiDiagnosis: String = "",
+    val status: String = "open",
+    val adminReply: String = "",
+    val sentToWhatsApp: Boolean = false,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun toCreateMap(uid: String): Map<String, Any> = mapOf(
+        "userId" to uid,
+        "userEmail" to userEmail.trim().take(120),
+        "category" to category,
+        "message" to message.trim().take(4000),
+        "aiDiagnosis" to aiDiagnosis.take(4000),
+        "status" to status,
+        "adminReply" to adminReply.take(2000),
+        "sentToWhatsApp" to sentToWhatsApp,
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
     )

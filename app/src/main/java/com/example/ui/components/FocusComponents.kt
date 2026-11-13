@@ -100,66 +100,11 @@ fun PulseCard(
     accentBorder: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val tokens = LocalFocusUiTokens.current
-    val shape = RoundedCornerShape(tokens.cornerRadius)
-    val pad = if (tokens.compactDensity) 12.dp else 18.dp
-    val borderColor = if (accentBorder) {
-        MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
-    } else {
-        MaterialTheme.colorScheme.outlineVariant
-    }
-
-    when (tokens.cardStyle) {
-        "outlined" -> {
-            OutlinedCard(
-                shape = shape,
-                border = BorderStroke(1.2.dp, if (accentBorder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline),
-                colors = CardDefaults.outlinedCardColors(
-                    containerColor = MaterialTheme.colorScheme.surface
-                ),
-                modifier = modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(pad),
-                    verticalArrangement = Arrangement.spacedBy(if (tokens.compactDensity) 8.dp else 12.dp),
-                    content = content
-                )
-            }
-        }
-        "tonal" -> {
-            Card(
-                shape = shape,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                border = BorderStroke(1.dp, borderColor),
-                modifier = modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(pad),
-                    verticalArrangement = Arrangement.spacedBy(if (tokens.compactDensity) 8.dp else 12.dp),
-                    content = content
-                )
-            }
-        }
-        else -> {
-            Card(
-                shape = shape,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = if (tokens.backgroundPreset == "none") 3.dp else 0.dp),
-                border = BorderStroke(1.dp, borderColor),
-                modifier = modifier.fillMaxWidth()
-            ) {
-                Column(
-                    modifier = Modifier.padding(pad),
-                    verticalArrangement = Arrangement.spacedBy(if (tokens.compactDensity) 8.dp else 12.dp),
-                    content = content
-                )
-            }
-        }
-    }
+    GlassCard(
+        modifier = modifier,
+        accentBorder = accentBorder,
+        content = content
+    )
 }
 
 /**

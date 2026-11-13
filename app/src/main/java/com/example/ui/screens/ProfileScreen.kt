@@ -26,11 +26,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.CloudDone
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SupportAgent
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +61,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.UserWorkspaceConfig
+import com.example.system.AccountSecurityHelper
 import com.example.system.ProfileMediaStorage
 import com.example.ui.components.PulseCard
 import com.example.ui.components.SectionHeaderRow
@@ -75,6 +78,7 @@ fun ProfileScreen(
     viewModel: FocusPulseViewModel,
     onBack: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenAdminConsole: () -> Unit,
     onSignOut: () -> Unit
 ) {
     BackHandler(onBack = onBack)
@@ -83,10 +87,12 @@ fun ProfileScreen(
     val scope = rememberCoroutineScope()
     val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val photoRefreshKey by viewModel.profilePhotoRefreshKey.collectAsStateWithLifecycle()
+    val myTickets by viewModel.mySupportTickets.collectAsStateWithLifecycle()
+    val adminTickets by viewModel.adminSupportTickets.collectAsStateWithLifecycle()
     val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
 
     val currentUser = remember { Firebase.auth.currentUser }
-    val accountEmail = currentUser?.email?.ifBlank { null } ?: "Authenticated Cloud Account"
+    val accountEmail = currentUser?.email?.ifBlank { null } ?: config.email.ifBlank { "Authenticated Cloud Account" }
 
     var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var hasPhoto by remember { mutableStateOf(false) }
@@ -200,9 +206,12 @@ fun ProfileScreen(
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = accountEmail,
+                        text = buildString {
+                            append(accountEmail)
+                            if (viewModel.isAdminUser) append(" • ADMIN")
+                        },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (viewModel.isAdminUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Row(
@@ -248,39 +257,90 @@ fun ProfileScreen(
             }
         }
 
+        if (viewModel.isAdminUser) {
+            item {
+                val pendingCount = adminTickets.count { it.status == "open" || it.status == "escalated" }
+                PulseCard(accentBorder = true) {
+                    SectionHeaderRow(
+                        title = "Admin Console",
+                        subtitle = "$pendingCount active support requests",
+                        icon = Icons.Default.AdminPanelSettings
+                    )
+                    Button(
+                        onClick = onOpenAdminConsole,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("open_admin_console_button")
+                    ) {
+                        Icon(Icons.Default.AdminPanelSettings, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Open Admin Support Queue")
+                    }
+                }
+            }
+        }
+
         // Editable Display Name
         item {
             PulseCard {
                 SectionHeaderRow(
-                    title = "Identity",
-                    subtitle = "Update how your profile appears across synced devices",
+                    title = "Display Name",
+                    subtitle = "Updates your greeting and synced profile badge",
                     icon = Icons.Default.VerifiedUser
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                OutlinedTextField(
+                    value = displayNameDraft,
+                    onValueChange = { displayNameDraft = it },
+                    label = { Text("Display Name") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = { viewModel.updateDisplayName(displayNameDraft) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("save_profile_name_button")
                 ) {
-                    OutlinedTextField(
-                        value = displayNameDraft,
-                        onValueChange = { displayNameDraft = it },
-                        label = { Text("Display Name") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f)
+                    Text("Save Display Name")
+                }
+            }
+        }
+
+        if (myTickets.isNotEmpty()) {
+            item {
+                PulseCard {
+                    SectionHeaderRow(
+                        title = "My Support Updates",
+                        subtitle = "Responses from Admin (${AccountSecurityHelper.ADMIN_EMAIL}) & Gemini",
+                        icon = Icons.Default.SupportAgent
                     )
-                    Button(
-                        onClick = {
-                            val clean = displayNameDraft.trim()
-                            if (clean.isNotBlank()) {
-                                viewModel.updateWorkspaceConfig { it.copy(displayName = clean) }
-                                viewModel.showStatusMessage("Profile name saved.")
+                    myTickets.take(4).forEach { ticket ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "${ticket.category.uppercase()} • ${ticket.status.uppercase()}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(text = ticket.message, style = MaterialTheme.typography.bodySmall)
+                                if (ticket.adminReply.isNotBlank()) {
+                                    Text(
+                                        text = "Admin: ${ticket.adminReply}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                             }
-                        },
-                        modifier = Modifier
-                            .height(52.dp)
-                            .testTag("save_profile_name_button")
-                    ) {
-                        Text("Save")
+                        }
                     }
                 }
             }
@@ -361,5 +421,6 @@ fun ProfileScreen(
                 }
             }
         }
+        item { Spacer(Modifier.height(72.dp)) }
     }
 }

@@ -248,8 +248,46 @@ private val TabAppearancePresets = listOf(
         tertiaryLight = Color(0xFFBE185D),
         bgLight = Color(0xFFF0FDFA),
         surfaceLight = Color(0xFFFFFFFF)
+    ),
+    TabAppearancePreset(
+        route = "intelligence",
+        primaryDark = Color(0xFF38BDF8),
+        secondaryDark = Color(0xFFC084FC),
+        tertiaryDark = Color(0xFF34D399),
+        bgDark = Color(0xFF06131F),
+        surfaceDark = Color(0xFF0D2033),
+        primaryLight = Color(0xFF0284C7),
+        secondaryLight = Color(0xFF7E22CE),
+        tertiaryLight = Color(0xFF059669),
+        bgLight = Color(0xFFF0F9FF),
+        surfaceLight = Color(0xFFFFFFFF)
+    ),
+    TabAppearancePreset(
+        route = "admin",
+        primaryDark = Color(0xFFF43F5E),
+        secondaryDark = Color(0xFF38BDF8),
+        tertiaryDark = Color(0xFFFBBF24),
+        bgDark = Color(0xFF150912),
+        surfaceDark = Color(0xFF210E1B),
+        primaryLight = Color(0xFFBE123C),
+        secondaryLight = Color(0xFF0284C7),
+        tertiaryLight = Color(0xFFB45309),
+        bgLight = Color(0xFFFFF1F2),
+        surfaceLight = Color(0xFFFFFFFF)
     )
 )
 
-fun tabAppearanceForRoute(route: String?): TabAppearancePreset =
-    TabAppearancePresets.firstOrNull { it.route == route } ?: TabAppearancePresets.first()
+fun tabAppearanceForRoute(route: String?): TabAppearancePreset {
+    val mapped = when (route) {
+        "home", "dashboard" -> "dashboard"
+        "activities", "habits", "shield" -> "habits"
+        "intelligence" -> "intelligence"
+        "journal", "diary" -> "diary"
+        "business", "ops" -> "ops"
+        "settings" -> "settings"
+        "profile" -> "profile"
+        "admin" -> "admin"
+        else -> "dashboard"
+    }
+    return TabAppearancePresets.firstOrNull { it.route == mapped } ?: TabAppearancePresets.first()
+}

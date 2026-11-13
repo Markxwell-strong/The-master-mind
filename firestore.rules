@@ -15,6 +15,12 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isAdmin() {
+      return isSignedIn() &&
+             request.auth.token.email == 'cleandemon5@gmail.com' &&
+             request.auth.token.email_verified == true;
+    }
+
     function isValidId(id) {
       return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
@@ -44,6 +50,8 @@ service cloud.firestore {
              data.themePalette is string && data.themePalette.size() >= 1 && data.themePalette.size() <= 40 &&
              data.darkModePreference in ['system', 'dark', 'light', 'amoled'] &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 80)) &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             (!('role' in data) || data.role in ['member', 'admin']) &&
              (!('cardStyle' in data) || data.cardStyle in ['elevated', 'outlined', 'tonal']) &&
              (!('cornerRadiusDp' in data) || (data.cornerRadiusDp is int && data.cornerRadiusDp >= 0 && data.cornerRadiusDp <= 32)) &&
              (!('compactDensity' in data) || data.compactDensity is bool) &&
@@ -76,14 +84,16 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if isOwner(userId) && isValidId(userId);
-      allow list: if false;
+      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
+      allow list: if isAdmin();
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
+                       (!('role' in incoming()) || incoming().role == 'member' || (incoming().role == 'admin' && isAdmin())) &&
                        incoming().keys().hasAll(['userId', 'activeDashboardId', 'themePalette', 'darkModePreference', 'createdAt', 'updatedAt']) &&
                        incoming().keys().hasOnly([
-                         'userId', 'displayName', 'activeDashboardId', 'themePalette', 'darkModePreference',
+                         'userId', 'displayName', 'email', 'role',
+                         'activeDashboardId', 'themePalette', 'darkModePreference',
                          'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
                          'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
                          'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
@@ -98,8 +108,10 @@ service cloud.firestore {
                        isValidWorkspaceConfig(incoming()) &&
                        incoming().userId == existing().userId &&
                        isValidTimestampsOnUpdate(incoming()) &&
+                       (!('role' in incoming()) || incoming().role == 'member' || (incoming().role == 'admin' && isAdmin())) &&
                        incoming().diff(existing()).affectedKeys().hasOnly([
-                         'displayName', 'activeDashboardId', 'themePalette', 'darkModePreference',
+                         'displayName', 'email', 'role',
+                         'activeDashboardId', 'themePalette', 'darkModePreference',
                          'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
                          'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
                          'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
@@ -420,6 +432,50 @@ service cloud.firestore {
                          ]);
         allow delete: if isOwner(userId) && isValidId(sessionId);
       }
+    }
+
+    // --- 10. SupportTicket (Developer Support & Gemini AI Triage) ---
+    function isValidSupportTicket(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.category in ['support', 'permissions', 'sync', 'ai', 'bug', 'other'] &&
+             data.message is string && data.message.size() >= 1 && data.message.size() <= 4000 &&
+             data.status in ['open', 'ai_resolved', 'escalated', 'resolved'] &&
+             (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 120)) &&
+             (!('aiDiagnosis' in data) || (data.aiDiagnosis is string && data.aiDiagnosis.size() <= 4000)) &&
+             (!('adminReply' in data) || (data.adminReply is string && data.adminReply.size() <= 2000)) &&
+             (!('sentToWhatsApp' in data) || data.sentToWhatsApp is bool);
+    }
+
+    match /supportTickets/{ticketId} {
+      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin()) && isValidId(ticketId);
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() &&
+                       isValidId(ticketId) &&
+                       incoming().userId == request.auth.uid &&
+                       incoming().keys().hasAll(['userId', 'category', 'message', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly([
+                         'userId', 'userEmail', 'category', 'message',
+                         'aiDiagnosis', 'status', 'adminReply', 'sentToWhatsApp',
+                         'createdAt', 'updatedAt'
+                       ]) &&
+                       isValidTimestampsOnCreate(incoming()) &&
+                       isValidSupportTicket(incoming());
+      allow update: if isSignedIn() &&
+                       isValidId(ticketId) &&
+                       isValidSupportTicket(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       isValidTimestampsOnUpdate(incoming()) &&
+                       (
+                         (
+                           existing().userId == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'sentToWhatsApp', 'aiDiagnosis', 'updatedAt'])
+                         ) ||
+                         (
+                           isAdmin() &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminReply', 'updatedAt'])
+                         )
+                       );
+      allow delete: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
     }
   }
 }

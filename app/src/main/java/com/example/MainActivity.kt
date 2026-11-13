@@ -1,73 +1,63 @@
 package com.example
 
 import android.app.Application
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Dashboard
-import androidx.compose.material.icons.filled.Inventory2
+import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.credentials.CredentialManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -75,23 +65,27 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.example.data.ai.FocusAiRepository
 import com.example.data.firebase.configureAppCheck
-import com.example.data.model.UserWorkspaceConfig
+import com.example.data.preferences.AppearancePreferencesState
 import com.example.data.repository.FocusPulseRepository
-import com.example.system.SupportHelper
 import com.example.ui.auth.AuthScreen
 import com.example.ui.auth.signOut
+import com.example.ui.components.DeveloperSupportDialog
+import com.example.ui.components.GlassNavDestination
+import com.example.ui.components.GlassNavigationBar
+import com.example.ui.components.GlassNavigationRail
+import com.example.ui.components.PermissionsOnboardingDialog
+import com.example.ui.screens.ActivitiesScreen
+import com.example.ui.screens.AdminConsoleScreen
 import com.example.ui.screens.DashboardHubScreen
 import com.example.ui.screens.DiaryAndAiBuddyScreen
-import com.example.ui.screens.HabitsAndNotebookScreen
+import com.example.ui.screens.IntelligenceScreen
 import com.example.ui.screens.InventoryAnalyticsScreen
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SettingsScreen
-import com.example.ui.screens.ShieldAndSystemScreen
-import com.example.ui.theme.LocalFocusUiTokens
-import com.example.ui.theme.MasterMindBackgroundHost
-import com.example.ui.theme.MasterMindTheme
+import com.example.ui.theme.GlassBackgroundHost
+import com.example.ui.theme.MasterMindGlassTheme
+import com.example.ui.viewmodel.AppNotificationItem
 import com.example.ui.viewmodel.FocusPulseViewModel
-import com.example.ui.viewmodel.UiState
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -101,30 +95,23 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 
-const val ROUTE_DASHBOARD = "dashboard"
-const val ROUTE_SHIELD = "shield"
-const val ROUTE_HABITS = "habits"
-const val ROUTE_OPS = "ops"
-const val ROUTE_DIARY = "diary"
+const val ROUTE_HOME = "home"
+const val ROUTE_ACTIVITIES = "activities"
+const val ROUTE_INTELLIGENCE = "intelligence"
+const val ROUTE_JOURNAL = "journal"
 const val ROUTE_SETTINGS = "settings"
+
+// Secondary module routes (kept out of primary bottom navigation bar)
+const val ROUTE_BUSINESS = "business"
 const val ROUTE_PROFILE = "profile"
-private const val ACTION_WHATSAPP_DEV = "whatsapp_dev"
+const val ROUTE_ADMIN = "admin"
 
-private data class BottomNavEntry(
-    val id: String,
-    val labelRes: Int,
-    val icon: ImageVector,
-    val isRoute: Boolean = true
-)
-
-private val NavBarEntries = listOf(
-    BottomNavEntry(ROUTE_DASHBOARD, R.string.nav_home, Icons.Default.Dashboard),
-    BottomNavEntry(ROUTE_SHIELD, R.string.nav_shield, Icons.Default.Shield),
-    BottomNavEntry(ROUTE_HABITS, R.string.nav_habits, Icons.Default.CheckCircle),
-    BottomNavEntry(ROUTE_OPS, R.string.nav_ops, Icons.Default.Inventory2),
-    BottomNavEntry(ROUTE_DIARY, R.string.nav_diary, Icons.Default.AutoAwesome),
-    BottomNavEntry(ROUTE_SETTINGS, R.string.nav_settings, Icons.Default.Settings),
-    BottomNavEntry(ACTION_WHATSAPP_DEV, R.string.nav_support, Icons.AutoMirrored.Filled.Chat, isRoute = false)
+private val PrimaryDestinations = listOf(
+    GlassNavDestination(ROUTE_HOME, "Home", Icons.Default.Dashboard),
+    GlassNavDestination(ROUTE_ACTIVITIES, "Activities", Icons.Default.Bolt),
+    GlassNavDestination(ROUTE_INTELLIGENCE, "Intelligence", Icons.Default.Psychology),
+    GlassNavDestination(ROUTE_JOURNAL, "Journal", Icons.Default.EditNote),
+    GlassNavDestination(ROUTE_SETTINGS, "Settings", Icons.Default.Settings)
 )
 
 class MainActivity : ComponentActivity() {
@@ -138,6 +125,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             AppNavigation()
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        configureAppCheck(this, intent)
     }
 }
 
@@ -155,16 +148,24 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
     val user = currentUser
 
     if (user == null) {
-        MasterMindTheme(UserWorkspaceConfig()) {
-            AuthScreen(onAuthSuccess = {})
+        MasterMindGlassTheme(appearance = AppearancePreferencesState()) {
+            GlassBackgroundHost(
+                appearanceState = AppearancePreferencesState(),
+                activeRoute = ROUTE_HOME,
+                backgroundRefreshKey = 0
+            ) {
+                AuthScreen(onAuthSuccess = {})
+            }
         }
     } else {
         val uid = user.uid
         val displayName = user.displayName ?: user.email ?: "Master Mind User"
+        val email = user.email.orEmpty()
         key(uid) {
             AuthenticatedMasterMindShell(
                 currentUserId = uid,
-                displayName = displayName
+                displayName = displayName,
+                userEmail = email
             )
         }
     }
@@ -173,9 +174,11 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
 @Composable
 private fun AuthenticatedMasterMindShell(
     currentUserId: String,
-    displayName: String
+    displayName: String,
+    userEmail: String
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
 
@@ -191,16 +194,33 @@ private fun AuthenticatedMasterMindShell(
                     repository = FocusPulseRepository(db),
                     aiRepository = FocusAiRepository(),
                     currentUserId = currentUserId,
-                    displayName = displayName
+                    displayName = displayName,
+                    userEmail = userEmail
                 )
             }
         }
     )
 
-    val configState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
+    val appearance by viewModel.appearanceState.collectAsStateWithLifecycle()
     val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
     val bgRefreshKey by viewModel.customBgRefreshKey.collectAsStateWithLifecycle()
-    val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
+    val permissions by viewModel.permissions.collectAsStateWithLifecycle()
+    val showPermissionsPrompt by viewModel.showPermissionsPrompt.collectAsStateWithLifecycle()
+    val notificationsFeed by viewModel.notificationsFeed.collectAsStateWithLifecycle()
+
+    var showSupportDialog by remember { mutableStateOf(false) }
+    var showNotificationsDialog by remember { mutableStateOf(false) }
+
+    // Refresh permission checks automatically whenever user returns from System Settings
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshSystemTelemetry(checkOnboardingPrompt = false)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(statusBanner) {
@@ -213,12 +233,9 @@ private fun AuthenticatedMasterMindShell(
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentDestination = navBackStackEntry?.destination
-    val activeRoute = currentDestination?.route ?: ROUTE_DASHBOARD
+    val activeRoute = navBackStackEntry?.destination?.route ?: ROUTE_HOME
 
-    MasterMindTheme(config = config, activeRoute = activeRoute) {
-        val tokens = LocalFocusUiTokens.current
-
+    MasterMindGlassTheme(appearance = appearance, activeRoute = activeRoute) {
         fun navigateTopLevel(route: String) {
             navController.navigate(route) {
                 popUpTo(navController.graph.findStartDestination().id) {
@@ -229,140 +246,66 @@ private fun AuthenticatedMasterMindShell(
             }
         }
 
-        fun openProfile() {
-            navController.navigate(ROUTE_PROFILE) {
+        fun openSecondary(route: String) {
+            navController.navigate(route) {
                 launchSingleTop = true
             }
         }
 
-        fun handleNavEntryClick(entry: BottomNavEntry) {
-            if (entry.isRoute) {
-                navigateTopLevel(entry.id)
-            } else {
-                SupportHelper.openDeveloperWhatsApp(context)
-            }
+        if (showPermissionsPrompt) {
+            PermissionsOnboardingDialog(
+                permissions = permissions,
+                onRefreshStatus = { viewModel.refreshSystemTelemetry(checkOnboardingPrompt = false) },
+                onOpenUsageAccess = { viewModel.openUsageAccessSettings() },
+                onOpenAccessibility = { viewModel.openAccessibilitySettings() },
+                onOpenDndPolicy = { viewModel.openDndPolicySettings() },
+                onOpenExactAlarm = { viewModel.openExactAlarmSettings() },
+                onDismiss = { viewModel.dismissPermissionsPrompt() }
+            )
         }
 
-        MasterMindBackgroundHost(backgroundRefreshKey = bgRefreshKey) {
+        if (showSupportDialog) {
+            DeveloperSupportDialog(
+                viewModel = viewModel,
+                initialCategory = "support",
+                onDismiss = { showSupportDialog = false }
+            )
+        }
+
+        if (showNotificationsDialog) {
+            NotificationsCenterDialog(
+                notifications = notificationsFeed,
+                onOpenActivities = {
+                    showNotificationsDialog = false
+                    navigateTopLevel(ROUTE_ACTIVITIES)
+                },
+                onOpenPermissions = {
+                    showNotificationsDialog = false
+                    viewModel.openPermissionsPrompt()
+                },
+                onDismiss = { showNotificationsDialog = false }
+            )
+        }
+
+        GlassBackgroundHost(
+            appearanceState = appearance,
+            activeRoute = activeRoute,
+            backgroundRefreshKey = bgRefreshKey
+        ) {
             BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                val useSideRail = maxWidth >= 700.dp || config.navBarStyle == "side_rail"
-                val useFloatingDock = !useSideRail && config.navBarStyle == "floating_dock"
-                val useBottomBar = !useSideRail && !useFloatingDock
+                val useSideRail = maxWidth >= 700.dp
 
                 Scaffold(
                     containerColor = Color.Transparent,
                     contentWindowInsets = WindowInsets.safeDrawing,
                     snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
                     bottomBar = {
-                        if (useBottomBar) {
-                            Surface(
-                                color = tokens.resolvedNavBarColor.copy(alpha = 0.96f),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Column(modifier = Modifier.navigationBarsPadding()) {
-                                    HorizontalDivider(color = tokens.resolvedBorderColor.copy(alpha = 0.65f))
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 4.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.SpaceEvenly,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        NavBarEntries.forEach { entry ->
-                                            val selected = entry.isRoute &&
-                                                currentDestination?.hierarchy?.any { it.route == entry.id } == true
-                                            val label = stringResource(entry.labelRes)
-                                            Column(
-                                                modifier = Modifier
-                                                    .weight(1f)
-                                                    .minimumInteractiveComponentSize()
-                                                    .heightIn(min = 54.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                                    .clickable { handleNavEntryClick(entry) }
-                                                    .padding(vertical = 4.dp)
-                                                    .testTag("nav_${entry.id}"),
-                                                horizontalAlignment = Alignment.CenterHorizontally,
-                                                verticalArrangement = Arrangement.Center
-                                            ) {
-                                                Box(
-                                                    modifier = Modifier
-                                                        .clip(RoundedCornerShape(14.dp))
-                                                        .background(
-                                                            if (selected) MaterialTheme.colorScheme.primaryContainer
-                                                            else Color.Transparent
-                                                        )
-                                                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                                                    contentAlignment = Alignment.Center
-                                                ) {
-                                                    Icon(
-                                                        imageVector = entry.icon,
-                                                        contentDescription = label,
-                                                        tint = if (selected) {
-                                                            MaterialTheme.colorScheme.primary
-                                                        } else {
-                                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                                        },
-                                                        modifier = Modifier.size(20.dp)
-                                                    )
-                                                }
-                                                Text(
-                                                    text = label,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                                    color = if (selected) {
-                                                        MaterialTheme.colorScheme.primary
-                                                    } else {
-                                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                                    },
-                                                    maxLines = 1,
-                                                    softWrap = false,
-                                                    overflow = TextOverflow.Ellipsis
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        } else if (useFloatingDock) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .navigationBarsPadding()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Surface(
-                                    color = tokens.resolvedNavBarColor.copy(alpha = 0.95f),
-                                    shape = RoundedCornerShape(28.dp),
-                                    border = BorderStroke(1.dp, tokens.resolvedBorderColor),
-                                    shadowElevation = 6.dp
-                                ) {
-                                    Row(
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        NavBarEntries.forEach { entry ->
-                                            val selected = entry.isRoute &&
-                                                currentDestination?.hierarchy?.any { it.route == entry.id } == true
-                                            IconButton(
-                                                onClick = { handleNavEntryClick(entry) },
-                                                modifier = Modifier.testTag("dock_${entry.id}")
-                                            ) {
-                                                Icon(
-                                                    imageVector = entry.icon,
-                                                    contentDescription = stringResource(entry.labelRes),
-                                                    tint = if (selected) {
-                                                        MaterialTheme.colorScheme.primary
-                                                    } else {
-                                                        MaterialTheme.colorScheme.onSurfaceVariant
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        if (!useSideRail) {
+                            GlassNavigationBar(
+                                destinations = PrimaryDestinations,
+                                activeRoute = activeRoute,
+                                onSelect = { dest -> navigateTopLevel(dest.route) }
+                            )
                         }
                     }
                 ) { innerPadding ->
@@ -372,55 +315,65 @@ private fun AuthenticatedMasterMindShell(
                             .padding(innerPadding)
                     ) {
                         if (useSideRail) {
-                            NavigationRail(
-                                containerColor = tokens.resolvedNavBarColor.copy(alpha = 0.92f)
-                            ) {
-                                Spacer(Modifier.size(8.dp))
-                                NavBarEntries.forEach { entry ->
-                                    val selected = entry.isRoute &&
-                                        currentDestination?.hierarchy?.any { it.route == entry.id } == true
-                                    NavigationRailItem(
-                                        selected = selected,
-                                        onClick = { handleNavEntryClick(entry) },
-                                        icon = { Icon(entry.icon, contentDescription = stringResource(entry.labelRes)) },
-                                        label = { Text(stringResource(entry.labelRes)) },
-                                        modifier = Modifier.testTag("rail_${entry.id}")
-                                    )
-                                }
-                            }
+                            GlassNavigationRail(
+                                destinations = PrimaryDestinations,
+                                activeRoute = activeRoute,
+                                onSelect = { dest -> navigateTopLevel(dest.route) }
+                            )
                         }
 
                         NavHost(
                             navController = navController,
-                            startDestination = ROUTE_DASHBOARD,
+                            startDestination = ROUTE_HOME,
                             modifier = Modifier.weight(1f)
                         ) {
-                            composable(ROUTE_DASHBOARD) {
+                            composable(ROUTE_HOME) {
                                 DashboardHubScreen(
                                     viewModel = viewModel,
                                     onNavigateTab = { route -> navigateTopLevel(route) },
-                                    onOpenProfile = { openProfile() },
-                                    onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) }
+                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) },
+                                    onOpenBusiness = { openSecondary(ROUTE_BUSINESS) },
+                                    onOpenNotifications = { showNotificationsDialog = true }
                                 )
                             }
-                            composable(ROUTE_SHIELD) {
-                                ShieldAndSystemScreen(viewModel = viewModel)
+                            composable(ROUTE_ACTIVITIES) {
+                                ActivitiesScreen(
+                                    viewModel = viewModel,
+                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenNotifications = { showNotificationsDialog = true }
+                                )
                             }
-                            composable(ROUTE_HABITS) {
-                                HabitsAndNotebookScreen(viewModel = viewModel)
+                            composable(ROUTE_INTELLIGENCE) {
+                                IntelligenceScreen(
+                                    viewModel = viewModel,
+                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenNotifications = { showNotificationsDialog = true },
+                                    onNavigateActivities = { navigateTopLevel(ROUTE_ACTIVITIES) }
+                                )
                             }
-                            composable(ROUTE_OPS) {
-                                InventoryAnalyticsScreen(viewModel = viewModel)
-                            }
-                            composable(ROUTE_DIARY) {
-                                DiaryAndAiBuddyScreen(viewModel = viewModel)
+                            composable(ROUTE_JOURNAL) {
+                                DiaryAndAiBuddyScreen(
+                                    viewModel = viewModel,
+                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenNotifications = { showNotificationsDialog = true }
+                                )
                             }
                             composable(ROUTE_SETTINGS) {
                                 SettingsScreen(
                                     viewModel = viewModel,
-                                    onBack = { navigateTopLevel(ROUTE_DASHBOARD) },
-                                    onOpenProfile = { openProfile() },
+                                    onBack = { navigateTopLevel(ROUTE_HOME) },
+                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenNotifications = { showNotificationsDialog = true },
+                                    onOpenBusiness = { openSecondary(ROUTE_BUSINESS) },
+                                    onOpenSupport = { showSupportDialog = true },
                                     onSignOut = { signOut(credentialManager, scope) }
+                                )
+                            }
+                            composable(ROUTE_BUSINESS) {
+                                InventoryAnalyticsScreen(
+                                    viewModel = viewModel,
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
                             composable(ROUTE_PROFILE) {
@@ -428,7 +381,14 @@ private fun AuthenticatedMasterMindShell(
                                     viewModel = viewModel,
                                     onBack = { navController.popBackStack() },
                                     onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) },
+                                    onOpenAdminConsole = { openSecondary(ROUTE_ADMIN) },
                                     onSignOut = { signOut(credentialManager, scope) }
+                                )
+                            }
+                            composable(ROUTE_ADMIN) {
+                                AdminConsoleScreen(
+                                    viewModel = viewModel,
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
                         }
@@ -437,4 +397,72 @@ private fun AuthenticatedMasterMindShell(
             }
         }
     }
+}
+
+@Composable
+private fun NotificationsCenterDialog(
+    notifications: List<AppNotificationItem>,
+    onOpenActivities: () -> Unit,
+    onOpenPermissions: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Notifications & Alerts") },
+        text = {
+            if (notifications.isEmpty()) {
+                Text(
+                    text = "All clear! No overdue reminders, low-stock alerts, or missing permissions.",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(notifications, key = { it.id }) { item ->
+                        val tint = when (item.severity) {
+                            "urgent" -> MaterialTheme.colorScheme.errorContainer
+                            "warning" -> MaterialTheme.colorScheme.tertiaryContainer
+                            else -> MaterialTheme.colorScheme.primaryContainer
+                        }
+                        Surface(
+                            color = tint.copy(alpha = 0.72f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = item.title,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = item.detail,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onOpenActivities) {
+                Text("View Tasks")
+            }
+        },
+        dismissButton = {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                TextButton(onClick = onOpenPermissions) { Text("Permissions") }
+                TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
 }

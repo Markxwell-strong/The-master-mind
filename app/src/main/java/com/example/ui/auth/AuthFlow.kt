@@ -47,8 +47,10 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -80,7 +82,7 @@ import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
 import com.example.R
-import com.example.system.SupportHelper
+import com.example.ui.components.UnauthSupportDialog
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -310,6 +312,13 @@ fun AuthScreen(
     val credentialManager = remember(context) { CredentialManager.create(context) }
     var isLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
+    var showSupportDialog by remember { mutableStateOf(false) }
+
+    if (showSupportDialog) {
+        UnauthSupportDialog(
+            onDismiss = { showSupportDialog = false }
+        )
+    }
 
     LaunchedEffect(Unit) {
         attemptAutoSignIn(
@@ -687,12 +696,7 @@ fun AuthScreen(
                     }
 
                     OutlinedButton(
-                        onClick = {
-                            SupportHelper.openDeveloperWhatsApp(
-                                context,
-                                "Hello Developer, I need sign-in or setup support for THE MASTER MIND."
-                            )
-                        },
+                        onClick = { showSupportDialog = true },
                         shape = RoundedCornerShape(14.dp),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -706,7 +710,7 @@ fun AuthScreen(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text("Having trouble? Contact Developer on WhatsApp")
+                        Text("Having trouble? Ask Gemini or Contact Developer")
                     }
                 }
             }

@@ -7,6 +7,8 @@
       "properties": {
         "userId": { "type": "string", "description": "Authenticated user UID" },
         "displayName": { "type": "string", "description": "User display name" },
+        "email": { "type": "string", "description": "User email address" },
+        "role": { "type": "string", "enum": ["member", "admin"], "description": "Access role (admin for cleandemon5@gmail.com)" },
         "activeDashboardId": { "type": "string", "description": "Selected dashboard preset ID (1 of 15)" },
         "themePalette": { "type": "string", "description": "Selected accent color palette key" },
         "darkModePreference": { "type": "string", "enum": ["system", "dark", "light", "amoled"], "description": "Theme brightness mode" },
@@ -183,6 +185,24 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "title", "durationMinutes", "mode", "completed", "createdAt", "updatedAt"]
+    },
+    "SupportTicket": {
+      "title": "SupportTicket",
+      "description": "Developer support and Gemini AI triage requests",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" },
+        "category": { "type": "string", "enum": ["support", "permissions", "sync", "ai", "bug", "other"] },
+        "message": { "type": "string" },
+        "aiDiagnosis": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "ai_resolved", "escalated", "resolved"] },
+        "adminReply": { "type": "string" },
+        "sentToWhatsApp": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "category", "message", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
@@ -221,6 +241,10 @@
     "/users/{userId}/focusSessions/{sessionId}": {
       "schema": { "$ref": "#/entities/FocusSession" },
       "description": "Focus & deep-work session logs"
+    },
+    "/supportTickets/{ticketId}": {
+      "schema": { "$ref": "#/entities/SupportTicket" },
+      "description": "Gemini AI triage & Admin developer support tickets"
     }
   }
 }

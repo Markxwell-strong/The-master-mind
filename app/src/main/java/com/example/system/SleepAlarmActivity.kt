@@ -42,7 +42,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.ui.theme.FocusPulseTheme
+import com.example.data.preferences.AppearancePreferencesState
+import com.example.ui.theme.MasterMindGlassTheme
 
 class SleepAlarmActivity : ComponentActivity() {
     private var ringtone: Ringtone? = null
@@ -58,7 +59,7 @@ class SleepAlarmActivity : ComponentActivity() {
         startAlarmFeedback()
 
         setContent {
-            FocusPulseTheme(darkModePreference = "dark") {
+            MasterMindGlassTheme(AppearancePreferencesState(darkModePreference = "dark")) {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Box(
                         modifier = Modifier
