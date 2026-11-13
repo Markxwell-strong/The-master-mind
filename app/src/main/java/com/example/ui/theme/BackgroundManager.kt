@@ -105,6 +105,7 @@ object BackgroundManager {
         "intelligence" -> "intelligence"
         "journal", "diary" -> "journal"
         "settings" -> "settings"
+        "profile" -> "profile"
         "business", "ops" -> "business"
         else -> "home"
     }

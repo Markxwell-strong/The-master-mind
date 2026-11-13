@@ -7,6 +7,9 @@ import com.example.data.firebase.OperationType
 import com.example.data.firebase.handleFirestoreError
 import com.example.data.model.AppLimitRule
 import com.example.data.model.BlockedSite
+import com.example.data.model.BusinessAccountConfig
+import com.example.data.model.BusinessDebtRecord
+import com.example.data.model.BusinessLedgerEntry
 import com.example.data.model.DiaryEntry
 import com.example.data.model.FocusSession
 import com.example.data.model.HabitItem
@@ -94,6 +97,34 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
 
     fun observeFocusSessions(uid: String): Flow<List<FocusSession>> =
         observeSubcollection(uid, "focusSessions", FocusSession::class.java)
+
+    fun observeBusinessAccount(uid: String): Flow<BusinessAccountConfig?> =
+        userDoc(uid).collection("businessAccount").document("default")
+            .snapshots()
+            .map { snapshot ->
+                if (snapshot.exists()) {
+                    snapshot.toObject(
+                        BusinessAccountConfig::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    )
+                } else {
+                    null
+                }
+            }
+            .catch { error -> logAndRethrow(error, OperationType.GET, "users/$uid/businessAccount/default") }
+
+    fun observeBusinessLedger(uid: String): Flow<List<BusinessLedgerEntry>> =
+        observeSubcollection(uid, "businessLedger", BusinessLedgerEntry::class.java)
+            .map { list -> list.sortedByDescending { it.occurredAtMillis } }
+
+    fun observeBusinessDebts(uid: String): Flow<List<BusinessDebtRecord>> =
+        observeSubcollection(uid, "businessDebts", BusinessDebtRecord::class.java)
+            .map { list ->
+                list.sortedWith(
+                    compareBy<BusinessDebtRecord> { it.isSettled }
+                        .thenByDescending { it.remainingAmount }
+                )
+            }
 
     private fun <T : Any> observeSubcollection(
         uid: String,
@@ -193,15 +224,21 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
         val uid = requireUserId()
         val authUser = auth.currentUser
         val authEmail = authUser?.email.orEmpty().trim().lowercase()
-        val isVerifiedAdmin = AccountSecurityHelper.isAdminEmail(authEmail) &&
+        val isVerifiedMainAdmin = AccountSecurityHelper.isMainAdminEmail(authEmail) &&
             (authUser?.isEmailVerified != false)
-        val safeConfig = config.copy(
-            role = if (isVerifiedAdmin) "admin" else "member",
-            email = if (authEmail.isNotBlank()) authEmail else config.email
-        )
         val docRef = userDoc(uid)
         try {
             val snap = docRef.get().await()
+            val serverRole = snap.getString("role") ?: "member"
+            val effectiveRole = when {
+                isVerifiedMainAdmin -> "admin"
+                snap.exists() && serverRole == "admin" -> "admin"
+                else -> "member"
+            }
+            val safeConfig = config.copy(
+                role = effectiveRole,
+                email = if (authEmail.isNotBlank()) authEmail else config.email
+            )
             if (snap.exists()) {
                 docRef.update(safeConfig.toUpdateMap(deviceLabel())).await()
             } else {
@@ -432,6 +469,147 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
         id
     }
 
+    // --- Business Accounting (Cash, Capital, Restock Deductions, Expenses, Debtors & Creditors) ---
+
+    suspend fun initializeBusinessAccount(
+        businessName: String,
+        openingCash: Double
+    ): Result<Unit> = runCatching {
+        val uid = requireUserId()
+        val cleanName = businessName.trim().ifBlank { "My Business" }.take(120)
+        val safeCash = openingCash.coerceIn(-1000000000.0, 1000000000.0)
+        val now = System.currentTimeMillis()
+        val accountRef = userDoc(uid).collection("businessAccount").document("default")
+        val ledgerId = newSafeId("ldg")
+        val ledgerRef = userDoc(uid).collection("businessLedger").document(ledgerId)
+        try {
+            val existing = accountRef.get().await()
+            val config = BusinessAccountConfig(
+                id = "default",
+                userId = uid,
+                businessName = cleanName,
+                isInitialized = true,
+                openingCash = safeCash,
+                currentCash = safeCash,
+                totalCapitalAdded = 0.0,
+                startedAtMillis = now
+            )
+            if (existing.exists()) {
+                accountRef.update(config.toUpdateMap()).await()
+            } else {
+                accountRef.set(config.toCreateMap(uid)).await()
+            }
+            val entry = BusinessLedgerEntry(
+                id = ledgerId,
+                userId = uid,
+                entryType = "opening_balance",
+                title = "Opening Cash Balance ($cleanName)",
+                category = "Capital",
+                amount = safeCash.coerceAtLeast(0.0),
+                balanceAfter = safeCash,
+                occurredAtMillis = now
+            )
+            ledgerRef.set(entry.toCreateMap(uid)).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, accountRef.path)
+            throw e
+        }
+    }
+
+    suspend fun recordCashMovement(
+        entryType: String,
+        title: String,
+        category: String,
+        signedDeltaCash: Double,
+        capitalAdditionAmount: Double = 0.0,
+        relatedItemId: String = ""
+    ): Result<Double> = runCatching {
+        val uid = requireUserId()
+        val accountRef = userDoc(uid).collection("businessAccount").document("default")
+        val ledgerId = newSafeId("ldg")
+        val ledgerRef = userDoc(uid).collection("businessLedger").document(ledgerId)
+        val now = System.currentTimeMillis()
+        try {
+            val snap = accountRef.get().await()
+            val current = if (snap.exists()) {
+                snap.toObject(BusinessAccountConfig::class.java) ?: BusinessAccountConfig(userId = uid)
+            } else {
+                BusinessAccountConfig(
+                    id = "default",
+                    userId = uid,
+                    businessName = "My Business",
+                    isInitialized = true,
+                    openingCash = 0.0,
+                    currentCash = 0.0,
+                    totalCapitalAdded = 0.0,
+                    startedAtMillis = now
+                )
+            }
+            val newCash = current.currentCash + signedDeltaCash
+            val newCapitalAdded = current.totalCapitalAdded + capitalAdditionAmount.coerceAtLeast(0.0)
+            val updatedAccount = current.copy(
+                userId = uid,
+                businessName = current.businessName.ifBlank { "My Business" },
+                isInitialized = true,
+                currentCash = newCash,
+                totalCapitalAdded = newCapitalAdded,
+                startedAtMillis = if (current.startedAtMillis > 0L) current.startedAtMillis else now
+            )
+            if (snap.exists()) {
+                accountRef.update(updatedAccount.toUpdateMap()).await()
+            } else {
+                accountRef.set(updatedAccount.toCreateMap(uid)).await()
+            }
+            val ledgerEntry = BusinessLedgerEntry(
+                id = ledgerId,
+                userId = uid,
+                entryType = entryType,
+                title = title.trim().ifBlank { entryType }.take(140),
+                category = category.trim().ifBlank { "General" }.take(60),
+                amount = kotlin.math.abs(signedDeltaCash),
+                balanceAfter = newCash,
+                relatedItemId = relatedItemId,
+                occurredAtMillis = now
+            )
+            ledgerRef.set(ledgerEntry.toCreateMap(uid)).await()
+            newCash
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ledgerRef.path)
+            throw e
+        }
+    }
+
+    suspend fun upsertDebtRecord(record: BusinessDebtRecord): Result<String> = runCatching {
+        val uid = requireUserId()
+        val id = record.id.ifBlank { newSafeId("dbt") }
+        val docRef = userDoc(uid).collection("businessDebts").document(id)
+        try {
+            if (record.id.isBlank()) {
+                docRef.set(record.toCreateMap(uid)).await()
+            } else {
+                docRef.update(record.toUpdateMap()).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(
+                e,
+                if (record.id.isBlank()) OperationType.CREATE else OperationType.UPDATE,
+                docRef.path
+            )
+            throw e
+        }
+        id
+    }
+
+    suspend fun deleteDebtRecord(debtId: String): Result<Unit> = deleteSubdoc("businessDebts", debtId)
+
+    suspend fun deleteLedgerEntry(entryId: String): Result<Unit> = deleteSubdoc("businessLedger", entryId)
+
     private suspend fun deleteSubdoc(collection: String, docId: String): Result<Unit> = runCatching {
         val uid = requireUserId()
         require(docId.isNotBlank()) { "Document ID must not be blank" }
@@ -453,6 +631,20 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
         emitAll(
             db.collection("supportTickets")
                 .whereEqualTo("userId", uid)
+                .snapshots()
+                .map { snap ->
+                    snap.toObjects(SupportTicket::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
+                        .sortedByDescending { it.createdAt?.seconds ?: 0L }
+                }
+                .catch { error -> logAndRethrow(error, OperationType.LIST, path) }
+        )
+    }
+
+    fun observeAssignedSupportTicketsForSubAdmin(adminUid: String): Flow<List<SupportTicket>> = flow {
+        val path = "supportTickets"
+        emitAll(
+            db.collection("supportTickets")
+                .whereArrayContains("sharedAdminUids", adminUid)
                 .snapshots()
                 .map { snap ->
                     snap.toObjects(SupportTicket::class.java, DocumentSnapshot.ServerTimestampBehavior.ESTIMATE)
@@ -486,6 +678,48 @@ class FocusPulseRepository(private val db: FirebaseFirestore) {
                 }
                 .catch { error -> logAndRethrow(error, OperationType.LIST, path) }
         )
+    }
+
+    suspend fun updateUserRoleByMainAdmin(targetUid: String, role: String): Result<Unit> = runCatching {
+        requireUserId()
+        require(targetUid.isNotBlank()) { "Target user ID required" }
+        val normalizedRole = if (role == "admin") "admin" else "member"
+        val docRef = userDoc(targetUid)
+        try {
+            docRef.update(
+                mapOf(
+                    "role" to normalizedRole,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
+    }
+
+    suspend fun assignSupportTicketAdmins(
+        ticketId: String,
+        sharedAdminUids: List<String>
+    ): Result<Unit> = runCatching {
+        requireUserId()
+        require(ticketId.isNotBlank()) { "Ticket ID required" }
+        val docRef = db.collection("supportTickets").document(ticketId)
+        try {
+            docRef.update(
+                mapOf(
+                    "sharedAdminUids" to sharedAdminUids.distinct().take(10),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docRef.path)
+            throw e
+        }
     }
 
     suspend fun createSupportTicket(ticket: SupportTicket): Result<String> = runCatching {

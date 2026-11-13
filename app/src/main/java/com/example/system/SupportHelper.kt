@@ -50,10 +50,12 @@ object SupportHelper {
 }
 
 object AccountSecurityHelper {
-    const val ADMIN_EMAIL = "cleandemon5@gmail.com"
+    private const val MAIN_ADMIN_EMAIL = "cleandemon5@gmail.com"
 
-    fun isAdminEmail(email: String?): Boolean =
-        email?.trim()?.equals(ADMIN_EMAIL, ignoreCase = true) == true
+    fun isMainAdminEmail(email: String?): Boolean =
+        email?.trim()?.equals(MAIN_ADMIN_EMAIL, ignoreCase = true) == true
+
+    fun isAdminEmail(email: String?): Boolean = isMainAdminEmail(email)
 }
 
 object BackgroundMediaStorage {

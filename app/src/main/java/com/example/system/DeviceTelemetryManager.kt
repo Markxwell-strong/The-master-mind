@@ -5,6 +5,7 @@ import android.app.ActivityManager
 import android.app.AlarmManager
 import android.app.AppOpsManager
 import android.app.NotificationManager
+import android.app.role.RoleManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
@@ -43,7 +44,8 @@ data class AppUsageInfo(
     val minutesToday: Long,
     val categoryGuess: String,
     val isRunningBackground: Boolean,
-    val standbyBucketLabel: String
+    val standbyBucketLabel: String,
+    val isGame: Boolean = false
 )
 
 data class SleepCircadianInsights(
@@ -60,7 +62,8 @@ data class SystemPermissionsState(
     val dndPolicyGranted: Boolean = false,
     val notificationsGranted: Boolean = false,
     val exactAlarmGranted: Boolean = false,
-    val microphoneGranted: Boolean = false
+    val microphoneGranted: Boolean = false,
+    val callScreeningRoleGranted: Boolean = false
 )
 
 class DeviceTelemetryManager(private val context: Context) {
@@ -113,14 +116,41 @@ class DeviceTelemetryManager(private val context: Context) {
             android.Manifest.permission.RECORD_AUDIO
         ) == PackageManager.PERMISSION_GRANTED
 
+        val callScreenGranted = isCallScreeningRoleHeld()
+
         return SystemPermissionsState(
             usageStatsGranted = usageGranted,
             accessibilityEnabled = accessibilityGranted,
             dndPolicyGranted = dndGranted,
             notificationsGranted = notifGranted,
             exactAlarmGranted = exactAlarmGranted,
-            microphoneGranted = micGranted
+            microphoneGranted = micGranted,
+            callScreeningRoleGranted = callScreenGranted
         )
+    }
+
+    fun isCallScreeningRoleHeld(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false
+        return try {
+            val rm = context.getSystemService(RoleManager::class.java)
+            rm?.isRoleHeld(RoleManager.ROLE_CALL_SCREENING) == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun createCallScreeningRoleIntent(): Intent? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return null
+        return try {
+            val rm = context.getSystemService(RoleManager::class.java)
+            if (rm != null && rm.isRoleAvailable(RoleManager.ROLE_CALL_SCREENING)) {
+                rm.createRequestRoleIntent(RoleManager.ROLE_CALL_SCREENING)
+            } else {
+                null
+            }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun readBatteryTelemetry(): BatteryTelemetry {
@@ -211,12 +241,13 @@ class DeviceTelemetryManager(private val context: Context) {
             val pkg = ri.activityInfo?.packageName ?: continue
             if (pkg == context.packageName || !seen.add(pkg)) continue
             val appInfo = ri.activityInfo.applicationInfo
-            val isSystemOnly = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0 &&
-                (appInfo.flags and ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) == 0
-            val label = ri.loadLabel(pm).toString()
+            val label = ri.loadLabel(pm).toString().ifBlank { pkg }
             val mins = usageMap[pkg] ?: 0L
             val isRunning = runningPackages.contains(pkg)
-            if (isSystemOnly && mins == 0L && !isKnownSocialOrBrowser(pkg)) continue
+            val category = guessCategory(pkg, label, appInfo)
+            val isGame = category == "gaming" ||
+                (appInfo.flags and ApplicationInfo.FLAG_IS_GAME != 0) ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appInfo.category == ApplicationInfo.CATEGORY_GAME)
 
             val bucket = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 try {
@@ -239,16 +270,17 @@ class DeviceTelemetryManager(private val context: Context) {
                     packageName = pkg,
                     appName = label,
                     minutesToday = mins,
-                    categoryGuess = guessCategory(pkg, label),
+                    categoryGuess = category,
                     isRunningBackground = isRunning,
-                    standbyBucketLabel = bucket
+                    standbyBucketLabel = bucket,
+                    isGame = isGame
                 )
             )
         }
         return result.sortedWith(
             compareByDescending<AppUsageInfo> { it.minutesToday }
                 .thenByDescending { it.isRunningBackground }
-                .thenBy { it.appName }
+                .thenBy { it.appName.lowercase() }
         )
     }
 
@@ -401,19 +433,29 @@ class DeviceTelemetryManager(private val context: Context) {
             lower.contains("chrome") || lower.contains("browser")
     }
 
-    private fun guessCategory(pkg: String, label: String): String {
+    private fun guessCategory(pkg: String, label: String, appInfo: ApplicationInfo? = null): String {
+        if (appInfo != null) {
+            if ((appInfo.flags and ApplicationInfo.FLAG_IS_GAME) != 0 ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && appInfo.category == ApplicationInfo.CATEGORY_GAME)
+            ) {
+                return "gaming"
+            }
+        }
         val combined = "$pkg $label".lowercase()
         return when {
             combined.contains("tiktok") || combined.contains("musically") ||
                 combined.contains("instagram") || combined.contains("facebook") ||
                 combined.contains("twitter") || combined.contains("reddit") ||
-                combined.contains("snapchat") || combined.contains("threads") -> "social"
+                combined.contains("snapchat") || combined.contains("threads") ||
+                combined.contains("whatsapp") || combined.contains("telegram") -> "social"
             combined.contains("youtube") || combined.contains("netflix") ||
                 combined.contains("twitch") || combined.contains("video") -> "video"
             combined.contains("chrome") || combined.contains("browser") ||
                 combined.contains("firefox") || combined.contains("opera") -> "browser"
             combined.contains("game") || combined.contains("pubg") ||
-                combined.contains("roblox") -> "gaming"
+                combined.contains("roblox") || combined.contains("freefire") ||
+                combined.contains("codm") || combined.contains("efootball") ||
+                combined.contains("chess") || combined.contains("minecraft") -> "gaming"
             else -> "other"
         }
     }

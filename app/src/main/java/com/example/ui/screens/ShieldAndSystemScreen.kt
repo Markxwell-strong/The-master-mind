@@ -4,6 +4,7 @@ import android.Manifest
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -14,11 +15,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
@@ -32,12 +35,16 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,6 +52,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,12 +65,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.AppLimitRule
 import com.example.data.model.UserWorkspaceConfig
+import com.example.system.AppUsageInfo
 import com.example.ui.components.MasterMindAdaptiveBoard
 import com.example.ui.components.PulseCard
 import com.example.ui.components.SectionHeaderRow
@@ -86,14 +97,42 @@ fun ShieldAndSystemScreen(
     val deepWorkRemSec by viewModel.deepWorkRemainingSec.collectAsStateWithLifecycle()
 
     val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
-    var selectedSection by remember { mutableIntStateOf(0) } // 0: Shield & Web, 1: Sleep & DeepWork, 2: Battery & Processes
+    var selectedSection by remember { mutableIntStateOf(0) } // 0: App & Web Shield, 1: Gaming Mode, 2: Sleep & DeepWork, 3: Processes & Battery
 
     var showAddRuleDialog by remember { mutableStateOf(false) }
+    var preselectedApp by remember { mutableStateOf<AppUsageInfo?>(null) }
     var showAddSiteDialog by remember { mutableStateOf(false) }
+    var shieldAppSearch by remember { mutableStateOf("") }
+    var gamingAppSearch by remember { mutableStateOf("") }
 
     val notifPermLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { viewModel.refreshSystemTelemetry() }
+
+    val callScreeningLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { viewModel.refreshSystemTelemetry() }
+
+    val rulePackageSet = remember(appRules) { appRules.map { it.packageName }.toSet() }
+    val filteredShieldApps = remember(deviceApps, shieldAppSearch) {
+        val q = shieldAppSearch.trim().lowercase()
+        val list = if (q.isEmpty()) deviceApps else deviceApps.filter {
+            it.appName.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+        }
+        list.take(30)
+    }
+
+    val sortedGamingApps = remember(deviceApps, gamingAppSearch, config.gamingAppPackages) {
+        val q = gamingAppSearch.trim().lowercase()
+        val filtered = if (q.isEmpty()) deviceApps else deviceApps.filter {
+            it.appName.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+        }
+        filtered.sortedWith(
+            compareByDescending<AppUsageInfo> { it.packageName in config.gamingAppPackages }
+                .thenByDescending { it.isGame }
+                .thenBy { it.appName.lowercase() }
+        ).take(40)
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -108,7 +147,7 @@ fun ShieldAndSystemScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Shield, Sleep & System",
+                        text = "Shield, Gaming & System",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
@@ -120,413 +159,675 @@ fun ShieldAndSystemScreen(
         }
 
         item {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 FilterChip(
                     selected = selectedSection == 0,
                     onClick = { selectedSection = 0 },
                     label = { Text("App & Web Shield") },
-                    leadingIcon = { Icon(Icons.Default.Shield, null, Modifier.size(16.dp)) }
+                    leadingIcon = { Icon(Icons.Default.Shield, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("shield_section_app_shield")
                 )
                 FilterChip(
                     selected = selectedSection == 1,
                     onClick = { selectedSection = 1 },
-                    label = { Text("Sleep & Deep Work") },
-                    leadingIcon = { Icon(Icons.Default.Bedtime, null, Modifier.size(16.dp)) }
+                    label = {
+                        Text(if (config.gamingModeEnabled) "Gaming Mode (ON)" else "Gaming Mode")
+                    },
+                    leadingIcon = { Icon(Icons.Default.SportsEsports, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("shield_section_gaming_mode")
                 )
                 FilterChip(
                     selected = selectedSection == 2,
                     onClick = { selectedSection = 2 },
+                    label = { Text("Sleep & Deep Work") },
+                    leadingIcon = { Icon(Icons.Default.Bedtime, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("shield_section_sleep")
+                )
+                FilterChip(
+                    selected = selectedSection == 3,
+                    onClick = { selectedSection = 3 },
                     label = { Text("Processes & Battery") },
-                    leadingIcon = { Icon(Icons.Default.BatteryChargingFull, null, Modifier.size(16.dp)) }
+                    leadingIcon = { Icon(Icons.Default.BatteryChargingFull, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("shield_section_battery")
                 )
             }
         }
 
-        if (selectedSection == 0) {
-            val shieldBlocks: List<@Composable (Modifier) -> Unit> = buildList {
-                add { mod ->
-                    PulseCard(
-                        modifier = mod,
-                        accentBorder = !perms.accessibilityEnabled || !perms.usageStatsGranted
-                    ) {
-                        SectionHeaderRow(
-                            title = "System Guardrails",
-                            subtitle = "Enable OS permissions for real app monitoring & lockouts",
-                            icon = Icons.Default.Security
-                        )
-                        PermissionActionRow(
-                            title = "Usage Stats Access",
-                            granted = perms.usageStatsGranted,
-                            onGrant = { viewModel.openUsageAccessSettings() }
-                        )
-                        PermissionActionRow(
-                            title = "App & Web Guard (Accessibility)",
-                            granted = perms.accessibilityEnabled,
-                            onGrant = { viewModel.openAccessibilitySettings() }
-                        )
-                        PermissionActionRow(
-                            title = "Do Not Disturb Policy",
-                            granted = perms.dndPolicyGranted,
-                            onGrant = { viewModel.openDndPolicySettings() }
-                        )
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                            PermissionActionRow(
-                                title = "Notifications & Alarms",
-                                granted = perms.notificationsGranted,
-                                onGrant = { notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
-                            )
-                        }
-                        OutlinedButton(
-                            onClick = { viewModel.openPermissionsPrompt() },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("open_permissions_wizard_button")
+        when (selectedSection) {
+            0 -> {
+                val shieldBlocks: List<@Composable (Modifier) -> Unit> = buildList {
+                    add { mod ->
+                        PulseCard(
+                            modifier = mod,
+                            accentBorder = !perms.accessibilityEnabled || !perms.usageStatsGranted
                         ) {
-                            Text("Open All-Permissions Setup Wizard")
+                            SectionHeaderRow(
+                                title = "System Guardrails",
+                                subtitle = "Enable OS permissions for real app blocking & lockouts",
+                                icon = Icons.Default.Security
+                            )
+                            PermissionActionRow(
+                                title = "Usage Stats Access",
+                                granted = perms.usageStatsGranted,
+                                onGrant = { viewModel.openUsageAccessSettings() }
+                            )
+                            PermissionActionRow(
+                                title = "App & Web Guard (Accessibility)",
+                                granted = perms.accessibilityEnabled,
+                                onGrant = { viewModel.openAccessibilitySettings() }
+                            )
+                            PermissionActionRow(
+                                title = "Do Not Disturb Policy",
+                                granted = perms.dndPolicyGranted,
+                                onGrant = { viewModel.openDndPolicySettings() }
+                            )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                PermissionActionRow(
+                                    title = "Notifications & Alarms",
+                                    granted = perms.notificationsGranted,
+                                    onGrant = { notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.openPermissionsPrompt() },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("open_permissions_wizard_button")
+                            ) {
+                                Text("Open All-Permissions Setup Wizard")
+                            }
+                        }
+                    }
+
+                    // Installed Phone Apps Quick-Block Picker (No typing package names)
+                    add { mod ->
+                        PulseCard(modifier = mod, accentBorder = true) {
+                            SectionHeaderRow(
+                                title = "Phone Apps Focus Blocker",
+                                subtitle = "Tap any installed app to block during Focus / Sleep",
+                                icon = Icons.Default.Lock,
+                                trailing = {
+                                    Button(
+                                        onClick = {
+                                            preselectedApp = null
+                                            showAddRuleDialog = true
+                                        },
+                                        modifier = Modifier.testTag("add_app_rule_button")
+                                    ) {
+                                        Icon(Icons.Default.Add, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Custom")
+                                    }
+                                }
+                            )
+                            OutlinedTextField(
+                                value = shieldAppSearch,
+                                onValueChange = { shieldAppSearch = it },
+                                placeholder = { Text("Search installed apps on your phone...") },
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("shield_app_search_input")
+                            )
+                            if (filteredShieldApps.isEmpty()) {
+                                Text(
+                                    text = "No installed apps detected yet. Tap Refresh above to reload installed apps.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    filteredShieldApps.forEach { app ->
+                                        val isBlocked = app.packageName in rulePackageSet
+                                        Surface(
+                                            color = if (isBlocked) {
+                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable {
+                                                    preselectedApp = app
+                                                    showAddRuleDialog = true
+                                                }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Text(
+                                                        text = app.appName,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                    Text(
+                                                        text = "${app.categoryGuess.uppercase()} • ${app.minutesToday}m today",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                                Switch(
+                                                    checked = isBlocked,
+                                                    onCheckedChange = { viewModel.quickToggleAppBlock(app) }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    add { mod ->
+                        PulseCard(modifier = mod) {
+                            SectionHeaderRow(
+                                title = "Website Focus Gateway",
+                                subtitle = "Blocks distracting domains in browsers during Deep Work",
+                                icon = Icons.Default.Language,
+                                trailing = {
+                                    OutlinedButton(
+                                        onClick = { showAddSiteDialog = true },
+                                        modifier = Modifier.testTag("add_blocked_site_button")
+                                    ) {
+                                        Icon(Icons.Default.Add, null, Modifier.size(16.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Add Site")
+                                    }
+                                }
+                            )
+                            if (blockedSites.isEmpty()) {
+                                Text(
+                                    text = "Add domains like tiktok.com, youtube.com, or reddit.com to block them during focus sessions.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                blockedSites.forEach { site ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(site.label, fontWeight = FontWeight.SemiBold)
+                                            Text(
+                                                "${site.domain} • ${if (site.blockAlways) "Always Blocked" else "Deep-Work & Sleep"}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        IconButton(onClick = { viewModel.deleteBlockedSite(site.id) }) {
+                                            Icon(Icons.Default.Delete, contentDescription = "Remove blocked site")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (appRules.isNotEmpty()) {
+                        appRules.forEach { rule ->
+                            add { mod ->
+                                PulseCard(modifier = mod) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(rule.appName, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                "Limit ${rule.dailyLimitMinutes}m/day • ${rule.todayUsedMinutes}m used",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                            Text(
+                                                "Sleep Lock: ${if (rule.blockDuringSleep) "ON" else "OFF"} • Deep Work: ${if (rule.blockDuringDeepWork) "ON" else "OFF"}",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.secondary
+                                            )
+                                        }
+                                        Row {
+                                            IconButton(
+                                                onClick = {
+                                                    if (rule.isLocked) viewModel.unlockAppRule(rule)
+                                                    else viewModel.lockAppUntilWake(rule)
+                                                }
+                                            ) {
+                                                Icon(
+                                                    imageVector = if (rule.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
+                                                    contentDescription = if (rule.isLocked) "Unlock app" else "Lock app until wake",
+                                                    tint = if (rule.isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                                                )
+                                            }
+                                            IconButton(onClick = { viewModel.deleteAppRule(rule.id) }) {
+                                                Icon(Icons.Default.Delete, contentDescription = "Delete app rule")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+                item {
+                    MasterMindAdaptiveBoard(
+                        layoutStyle = config.appLayoutStyle,
+                        blocks = shieldBlocks
+                    )
+                }
+            }
 
-                add { mod ->
-                    PulseCard(modifier = mod) {
-                        SectionHeaderRow(
-                            title = "Website Focus Gateway",
-                            subtitle = "Blocks distracting domains in browsers during Deep Work",
-                            icon = Icons.Default.Language,
-                            trailing = {
-                                OutlinedButton(
-                                    onClick = { showAddSiteDialog = true },
-                                    modifier = Modifier.testTag("add_blocked_site_button")
-                                ) {
-                                    Icon(Icons.Default.Add, null, Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Add Site")
+            1 -> {
+                // Gaming Mode & Automatic Call Decline
+                val gamingBlocks: List<@Composable (Modifier) -> Unit> = listOf(
+                    { mod ->
+                        PulseCard(modifier = mod, accentBorder = config.gamingModeEnabled) {
+                            SectionHeaderRow(
+                                title = "Gaming Mode • Zero Interruptions",
+                                subtitle = if (config.gamingModeEnabled) {
+                                    "ACTIVE — All incoming calls are automatically declined"
+                                } else {
+                                    "Turn ON manually or auto-activate when a selected game is open"
+                                },
+                                icon = Icons.Default.SportsEsports
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Enable Gaming Mode", fontWeight = FontWeight.Bold)
+                                    Text(
+                                        "Immediately activates call rejection while turned on",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = config.gamingModeEnabled,
+                                    onCheckedChange = { viewModel.setGamingModeEnabled(it) },
+                                    modifier = Modifier.testTag("gaming_mode_master_switch")
+                                )
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Auto-Decline All Incoming Calls", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Rejects every call in Gaming Mode or while a selected game is playing",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = config.gamingAutoDeclineCalls,
+                                    onCheckedChange = { viewModel.setGamingAutoDeclineCalls(it) },
+                                    modifier = Modifier.testTag("gaming_auto_decline_switch")
+                                )
+                            }
+
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                PermissionActionRow(
+                                    title = "Caller ID & Call Screening Role",
+                                    granted = perms.callScreeningRoleGranted,
+                                    onGrant = {
+                                        viewModel.createCallScreeningRoleIntent()?.let { callScreeningLauncher.launch(it) }
+                                    }
+                                )
+                            } else {
+                                PermissionActionRow(
+                                    title = "Do Not Disturb (Call Silencing)",
+                                    granted = perms.dndPolicyGranted,
+                                    onGrant = { viewModel.openDndPolicySettings() }
+                                )
+                            }
+
+                            PermissionActionRow(
+                                title = "Game Foreground Detection (Accessibility)",
+                                granted = perms.accessibilityEnabled,
+                                onGrant = { viewModel.openAccessibilitySettings() }
+                            )
+                        }
+                    },
+                    { mod ->
+                        PulseCard(modifier = mod) {
+                            SectionHeaderRow(
+                                title = "Auto-Trigger When Playing Selected Games",
+                                subtitle = "${config.gamingAppPackages.size} game(s) armed for automatic call rejection",
+                                icon = Icons.Default.PhoneDisabled
+                            )
+
+                            OutlinedTextField(
+                                value = gamingAppSearch,
+                                onValueChange = { gamingAppSearch = it },
+                                placeholder = { Text("Search installed games & apps...") },
+                                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                                singleLine = true,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("gaming_app_search_input")
+                            )
+
+                            if (sortedGamingApps.isEmpty()) {
+                                Text(
+                                    text = "No apps found on device yet. Tap Refresh above.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    sortedGamingApps.forEach { app ->
+                                        val selected = app.packageName in config.gamingAppPackages
+                                        Surface(
+                                            color = if (selected) {
+                                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f)
+                                            },
+                                            shape = RoundedCornerShape(12.dp),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .clickable { viewModel.toggleGamingAppPackage(app.packageName) }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .padding(horizontal = 10.dp, vertical = 6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                            ) {
+                                                Checkbox(
+                                                    checked = selected,
+                                                    onCheckedChange = { viewModel.toggleGamingAppPackage(app.packageName) }
+                                                )
+                                                Column(modifier = Modifier.weight(1f)) {
+                                                    Row(
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                    ) {
+                                                        Text(
+                                                            text = app.appName,
+                                                            fontWeight = FontWeight.SemiBold,
+                                                            maxLines = 1,
+                                                            overflow = TextOverflow.Ellipsis
+                                                        )
+                                                        if (app.isGame) {
+                                                            Surface(
+                                                                color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.2f),
+                                                                shape = RoundedCornerShape(6.dp)
+                                                            ) {
+                                                                Text(
+                                                                    text = "GAME",
+                                                                    style = MaterialTheme.typography.labelSmall,
+                                                                    fontWeight = FontWeight.Bold,
+                                                                    color = MaterialTheme.colorScheme.secondary,
+                                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                    Text(
+                                                        text = if (selected) "Auto-declines calls when open" else app.categoryGuess,
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                        )
-                        if (blockedSites.isEmpty()) {
-                            Text(
-                                text = "Add domains like tiktok.com, youtube.com, or reddit.com to block them during focus sessions.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    }
+                )
+                item {
+                    MasterMindAdaptiveBoard(
+                        layoutStyle = config.appLayoutStyle,
+                        blocks = gamingBlocks
+                    )
+                }
+            }
+
+            2 -> {
+                val sleepDeepWorkBlocks: List<@Composable (Modifier) -> Unit> = listOf(
+                    { mod ->
+                        PulseCard(modifier = mod, accentBorder = deepWorkRemSec > 0) {
+                            SectionHeaderRow(
+                                title = "Deep-Work Mode",
+                                subtitle = "Silences non-essential notifications & locks distracting apps",
+                                icon = Icons.Default.Bolt
                             )
-                        } else {
-                            blockedSites.forEach { site ->
+                            var deepWorkMinsDraft by remember(config.deepWorkMinutes) {
+                                mutableFloatStateOf(config.deepWorkMinutes.toFloat())
+                            }
+                            Text("Sprint Duration: ${deepWorkMinsDraft.roundToInt()} minutes")
+                            Slider(
+                                value = deepWorkMinsDraft,
+                                onValueChange = { deepWorkMinsDraft = it },
+                                onValueChangeFinished = {
+                                    viewModel.updateWorkspaceConfig { it.copy(deepWorkMinutes = deepWorkMinsDraft.roundToInt().toLong()) }
+                                },
+                                valueRange = 15f..180f
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Icon(Icons.Default.NotificationsOff, null)
+                                    Text("Silence Non-Essential Notifications")
+                                }
+                                Switch(
+                                    checked = config.deepWorkDndEnabled,
+                                    onCheckedChange = { enabled ->
+                                        viewModel.updateWorkspaceConfig { it.copy(deepWorkDndEnabled = enabled) }
+                                    }
+                                )
+                            }
+                            if (deepWorkRemSec > 0L) {
+                                Text(
+                                    text = String.format("Active: %02d:%02d left", deepWorkRemSec / 60, deepWorkRemSec % 60),
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                OutlinedButton(onClick = { viewModel.stopDeepWorkSession() }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Stop Deep Work")
+                                }
+                            } else {
+                                Button(
+                                    onClick = { viewModel.startDeepWorkSession(config.deepWorkMinutes) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Start Deep-Work Focus")
+                                }
+                            }
+                        }
+                    },
+                    { mod ->
+                        PulseCard(modifier = mod) {
+                            SectionHeaderRow(
+                                title = "Sleep Schedule & Wake Optimizer",
+                                subtitle = "Locks apps until wake time & aligns with circadian REM cycles",
+                                icon = Icons.Default.Bedtime
+                            )
+                            var bedHourDraft by remember(config.bedtimeHour) {
+                                mutableFloatStateOf(config.bedtimeHour.toFloat())
+                            }
+                            Text("Bedtime Hour: ${String.format("%02d:%02d", bedHourDraft.roundToInt(), config.bedtimeMinute)}")
+                            Slider(
+                                value = bedHourDraft,
+                                onValueChange = { bedHourDraft = it },
+                                onValueChangeFinished = {
+                                    viewModel.updateWorkspaceConfig { it.copy(bedtimeHour = bedHourDraft.roundToInt().toLong()) }
+                                },
+                                valueRange = 18f..23f
+                            )
+                            var wakeHourDraft by remember(config.wakeHour) {
+                                mutableFloatStateOf(config.wakeHour.toFloat())
+                            }
+                            Text("Target Wake Hour: ${String.format("%02d:%02d", wakeHourDraft.roundToInt(), config.wakeMinute)}")
+                            Slider(
+                                value = wakeHourDraft,
+                                onValueChange = { wakeHourDraft = it },
+                                onValueChangeFinished = {
+                                    viewModel.updateWorkspaceConfig { it.copy(wakeHour = wakeHourDraft.roundToInt().toLong()) }
+                                },
+                                valueRange = 4f..11f
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Lock Doomscroll Apps Until Wake")
+                                Switch(
+                                    checked = config.sleepLockEnabled,
+                                    onCheckedChange = { on -> viewModel.updateWorkspaceConfig { it.copy(sleepLockEnabled = on) } }
+                                )
+                            }
+                            Text(
+                                text = "Recommended Wake Windows (${sleepInsights.stepCountToday} steps synced):",
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            sleepInsights.recommendedWakeWindows.forEach { w ->
+                                Text("• $w", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                            }
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { viewModel.openHealthConnectSettings() },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Favorite, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Health Sync")
+                                }
+                                Button(
+                                    onClick = { viewModel.triggerSampleAlarm(true) },
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(Icons.Default.Alarm, null, Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Test Alarm")
+                                }
+                            }
+                        }
+                    },
+                    { mod ->
+                        PulseCard(modifier = mod) {
+                            SectionHeaderRow(
+                                title = "Inactivity Guard",
+                                subtitle = "Nudge or full-screen alarm if inactive for too long",
+                                icon = Icons.Default.Alarm
+                            )
+                            var inactivityDraft by remember(config.inactivityAlertHours) {
+                                mutableFloatStateOf(config.inactivityAlertHours.toFloat())
+                            }
+                            Text("Trigger after ${inactivityDraft.roundToInt()} hours of inactivity")
+                            Slider(
+                                value = inactivityDraft,
+                                onValueChange = { inactivityDraft = it },
+                                onValueChangeFinished = {
+                                    viewModel.updateWorkspaceConfig { it.copy(inactivityAlertHours = inactivityDraft.roundToInt().toLong()) }
+                                },
+                                valueRange = 1f..12f
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Use Full-Screen Alarm (vs Gentle Nudge)")
+                                Switch(
+                                    checked = config.inactivityFullScreenAlarm,
+                                    onCheckedChange = { full ->
+                                        viewModel.updateWorkspaceConfig { it.copy(inactivityFullScreenAlarm = full) }
+                                    }
+                                )
+                            }
+                        }
+                    }
+                )
+                item {
+                    MasterMindAdaptiveBoard(
+                        layoutStyle = config.appLayoutStyle,
+                        blocks = sleepDeepWorkBlocks
+                    )
+                }
+            }
+
+            else -> {
+                val batteryBlocks: List<@Composable (Modifier) -> Unit> = buildList {
+                    add { mod ->
+                        PulseCard(modifier = mod, accentBorder = true) {
+                            SectionHeaderRow(
+                                title = "Battery & Thermal Telemetry",
+                                subtitle = "${battery.levelPercent}% • ${battery.chargeSource} • ${battery.healthLabel}",
+                                icon = Icons.Default.BatteryChargingFull
+                            )
+                            Text(
+                                "Temperature: ${String.format("%.1f", battery.temperatureC)}°C • Voltage: ${battery.voltageMv} mV • Current: ${battery.currentMa} mA",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    deviceApps.forEach { app ->
+                        add { mod ->
+                            PulseCard(modifier = mod) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Column(modifier = Modifier.weight(1f)) {
-                                        Text(site.label, fontWeight = FontWeight.SemiBold)
+                                        Text(app.appName, fontWeight = FontWeight.SemiBold)
                                         Text(
-                                            "${site.domain} • ${if (site.blockAlways) "Always Blocked" else "Deep-Work & Sleep"}",
+                                            "${app.minutesToday}m today • ${if (app.isRunningBackground) "Running" else "Idle"} • ${app.standbyBucketLabel}",
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
-                                    IconButton(onClick = { viewModel.deleteBlockedSite(site.id) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Remove blocked site")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                add { mod ->
-                    PulseCard(modifier = mod) {
-                        SectionHeaderRow(
-                            title = "App Limits & Doomscroll Lock",
-                            subtitle = "Closes & locks apps like TikTok when limit or bedtime hits",
-                            icon = Icons.Default.Lock,
-                            trailing = {
-                                Button(
-                                    onClick = { showAddRuleDialog = true },
-                                    modifier = Modifier.testTag("add_app_rule_button")
-                                ) {
-                                    Icon(Icons.Default.Add, null, Modifier.size(16.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Add Rule")
-                                }
-                            }
-                        )
-                        if (appRules.isEmpty()) {
-                            Text(
-                                text = "No app rules yet. Add TikTok, Instagram, or any installed app to enforce daily limits and bedtime lockouts.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                appRules.forEach { rule ->
-                    add { mod ->
-                        PulseCard(modifier = mod) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(rule.appName, fontWeight = FontWeight.Bold)
-                                    Text(
-                                        "${rule.packageName} • Limit ${rule.dailyLimitMinutes}m/day",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                    Text(
-                                        "Sleep Lock: ${if (rule.blockDuringSleep) "ON" else "OFF"} • Deep Work: ${if (rule.blockDuringDeepWork) "ON" else "OFF"}",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.secondary
-                                    )
-                                }
-                                Row {
-                                    IconButton(
-                                        onClick = {
-                                            if (rule.isLocked) viewModel.unlockAppRule(rule)
-                                            else viewModel.lockAppUntilWake(rule)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        OutlinedButton(onClick = { viewModel.stopBackgroundProcess(app) }) {
+                                            Icon(Icons.Default.StopCircle, null, Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Stop")
                                         }
-                                    ) {
-                                        Icon(
-                                            imageVector = if (rule.isLocked) Icons.Default.Lock else Icons.Default.LockOpen,
-                                            contentDescription = if (rule.isLocked) "Unlock app" else "Lock app until wake",
-                                            tint = if (rule.isLocked) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    IconButton(onClick = { viewModel.deleteAppRule(rule.id) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = "Delete app rule")
+                                        TextButton(onClick = { viewModel.openSystemAppInfo(app.packageName) }) {
+                                            Text("Info")
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-            item {
-                MasterMindAdaptiveBoard(
-                    layoutStyle = config.appLayoutStyle,
-                    blocks = shieldBlocks
-                )
-            }
-        } else if (selectedSection == 1) {
-            val sleepDeepWorkBlocks: List<@Composable (Modifier) -> Unit> = listOf(
-                { mod ->
-                    PulseCard(modifier = mod, accentBorder = deepWorkRemSec > 0) {
-                        SectionHeaderRow(
-                            title = "Deep-Work Mode",
-                            subtitle = "Silences non-essential notifications & locks distracting apps",
-                            icon = Icons.Default.Bolt
-                        )
-                        var deepWorkMinsDraft by remember(config.deepWorkMinutes) {
-                            mutableFloatStateOf(config.deepWorkMinutes.toFloat())
-                        }
-                        Text("Sprint Duration: ${deepWorkMinsDraft.roundToInt()} minutes")
-                        Slider(
-                            value = deepWorkMinsDraft,
-                            onValueChange = { deepWorkMinsDraft = it },
-                            onValueChangeFinished = {
-                                viewModel.updateWorkspaceConfig { it.copy(deepWorkMinutes = deepWorkMinsDraft.roundToInt().toLong()) }
-                            },
-                            valueRange = 15f..180f
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Default.NotificationsOff, null)
-                                Text("Silence Non-Essential Notifications")
-                            }
-                            Switch(
-                                checked = config.deepWorkDndEnabled,
-                                onCheckedChange = { enabled ->
-                                    viewModel.updateWorkspaceConfig { it.copy(deepWorkDndEnabled = enabled) }
-                                }
-                            )
-                        }
-                        if (deepWorkRemSec > 0L) {
-                            Text(
-                                text = String.format("Active: %02d:%02d left", deepWorkRemSec / 60, deepWorkRemSec % 60),
-                                style = MaterialTheme.typography.headlineSmall,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            OutlinedButton(onClick = { viewModel.stopDeepWorkSession() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Stop Deep Work")
-                            }
-                        } else {
-                            Button(
-                                onClick = { viewModel.startDeepWorkSession(config.deepWorkMinutes) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("Start Deep-Work Focus")
-                            }
-                        }
-                    }
-                },
-                { mod ->
-                    PulseCard(modifier = mod) {
-                        SectionHeaderRow(
-                            title = "Sleep Schedule & Wake Optimizer",
-                            subtitle = "Locks apps until wake time & aligns with circadian REM cycles",
-                            icon = Icons.Default.Bedtime
-                        )
-                        var bedHourDraft by remember(config.bedtimeHour) {
-                            mutableFloatStateOf(config.bedtimeHour.toFloat())
-                        }
-                        Text("Bedtime Hour: ${String.format("%02d:%02d", bedHourDraft.roundToInt(), config.bedtimeMinute)}")
-                        Slider(
-                            value = bedHourDraft,
-                            onValueChange = { bedHourDraft = it },
-                            onValueChangeFinished = {
-                                viewModel.updateWorkspaceConfig { it.copy(bedtimeHour = bedHourDraft.roundToInt().toLong()) }
-                            },
-                            valueRange = 18f..23f
-                        )
-                        var wakeHourDraft by remember(config.wakeHour) {
-                            mutableFloatStateOf(config.wakeHour.toFloat())
-                        }
-                        Text("Target Wake Hour: ${String.format("%02d:%02d", wakeHourDraft.roundToInt(), config.wakeMinute)}")
-                        Slider(
-                            value = wakeHourDraft,
-                            onValueChange = { wakeHourDraft = it },
-                            onValueChangeFinished = {
-                                viewModel.updateWorkspaceConfig { it.copy(wakeHour = wakeHourDraft.roundToInt().toLong()) }
-                            },
-                            valueRange = 4f..11f
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Lock Doomscroll Apps Until Wake")
-                            Switch(
-                                checked = config.sleepLockEnabled,
-                                onCheckedChange = { on -> viewModel.updateWorkspaceConfig { it.copy(sleepLockEnabled = on) } }
-                            )
-                        }
-                        Text(
-                            text = "Recommended Wake Windows (${sleepInsights.stepCountToday} steps synced):",
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                        sleepInsights.recommendedWakeWindows.forEach { w ->
-                            Text("• $w", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = { viewModel.openHealthConnectSettings() },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Favorite, null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Health Sync")
-                            }
-                            Button(
-                                onClick = { viewModel.triggerSampleAlarm(true) },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(Icons.Default.Alarm, null, Modifier.size(16.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Test Alarm")
-                            }
-                        }
-                    }
-                },
-                { mod ->
-                    PulseCard(modifier = mod) {
-                        SectionHeaderRow(
-                            title = "Inactivity Guard",
-                            subtitle = "Nudge or full-screen alarm if inactive for too long",
-                            icon = Icons.Default.Alarm
-                        )
-                        var inactivityDraft by remember(config.inactivityAlertHours) {
-                            mutableFloatStateOf(config.inactivityAlertHours.toFloat())
-                        }
-                        Text("Trigger after ${inactivityDraft.roundToInt()} hours of inactivity")
-                        Slider(
-                            value = inactivityDraft,
-                            onValueChange = { inactivityDraft = it },
-                            onValueChangeFinished = {
-                                viewModel.updateWorkspaceConfig { it.copy(inactivityAlertHours = inactivityDraft.roundToInt().toLong()) }
-                            },
-                            valueRange = 1f..12f
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Use Full-Screen Alarm (vs Gentle Nudge)")
-                            Switch(
-                                checked = config.inactivityFullScreenAlarm,
-                                onCheckedChange = { full ->
-                                    viewModel.updateWorkspaceConfig { it.copy(inactivityFullScreenAlarm = full) }
-                                }
-                            )
-                        }
-                    }
+                item {
+                    MasterMindAdaptiveBoard(
+                        layoutStyle = config.appLayoutStyle,
+                        blocks = batteryBlocks
+                    )
                 }
-            )
-            item {
-                MasterMindAdaptiveBoard(
-                    layoutStyle = config.appLayoutStyle,
-                    blocks = sleepDeepWorkBlocks
-                )
-            }
-        } else {
-            val batteryBlocks: List<@Composable (Modifier) -> Unit> = buildList {
-                add { mod ->
-                    PulseCard(modifier = mod, accentBorder = true) {
-                        SectionHeaderRow(
-                            title = "Battery & Thermal Telemetry",
-                            subtitle = "${battery.levelPercent}% • ${battery.chargeSource} • ${battery.healthLabel}",
-                            icon = Icons.Default.BatteryChargingFull
-                        )
-                        Text(
-                            "Temperature: ${String.format("%.1f", battery.temperatureC)}°C • Voltage: ${battery.voltageMv} mV • Current: ${battery.currentMa} mA",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                }
-                deviceApps.forEach { app ->
-                    add { mod ->
-                        PulseCard(modifier = mod) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(app.appName, fontWeight = FontWeight.SemiBold)
-                                    Text(
-                                        "${app.minutesToday}m today • ${if (app.isRunningBackground) "Running" else "Idle"} • ${app.standbyBucketLabel}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                    OutlinedButton(onClick = { viewModel.stopBackgroundProcess(app) }) {
-                                        Icon(Icons.Default.StopCircle, null, Modifier.size(16.dp))
-                                        Spacer(Modifier.width(4.dp))
-                                        Text("Stop")
-                                    }
-                                    TextButton(onClick = { viewModel.openSystemAppInfo(app.packageName) }) {
-                                        Text("Info")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            item {
-                MasterMindAdaptiveBoard(
-                    layoutStyle = config.appLayoutStyle,
-                    blocks = batteryBlocks
-                )
             }
         }
         item { Spacer(Modifier.height(72.dp)) }
@@ -534,8 +835,12 @@ fun ShieldAndSystemScreen(
 
     if (showAddRuleDialog) {
         AddAppRuleDialog(
-            installedApps = deviceApps.map { it.packageName to it.appName },
-            onDismiss = { showAddRuleDialog = false },
+            installedApps = deviceApps,
+            initialSelectedApp = preselectedApp,
+            onDismiss = {
+                showAddRuleDialog = false
+                preselectedApp = null
+            },
             onConfirm = { pkg, name, mins, sleepLock, deepBlock ->
                 viewModel.saveAppRule(
                     AppLimitRule(
@@ -547,6 +852,7 @@ fun ShieldAndSystemScreen(
                     )
                 )
                 showAddRuleDialog = false
+                preselectedApp = null
             }
         )
     }
@@ -596,54 +902,99 @@ private fun PermissionActionRow(
 
 @Composable
 private fun AddAppRuleDialog(
-    installedApps: List<Pair<String, String>>,
+    installedApps: List<AppUsageInfo>,
+    initialSelectedApp: AppUsageInfo?,
     onDismiss: () -> Unit,
     onConfirm: (pkg: String, name: String, mins: Long, sleepLock: Boolean, deepBlock: Boolean) -> Unit
 ) {
-    var packageName by remember { mutableStateOf("com.zhiliaoapp.musically") }
-    var appName by remember { mutableStateOf("TikTok") }
-    var limitMins by remember { mutableStateOf("20") }
+    var search by remember { mutableStateOf("") }
+    val firstApp = initialSelectedApp ?: installedApps.firstOrNull()
+    var packageName by remember { mutableStateOf(firstApp?.packageName ?: "") }
+    var appName by remember { mutableStateOf(firstApp?.appName ?: "") }
+    var limitMins by remember { mutableStateOf("25") }
     var sleepLock by remember { mutableStateOf(true) }
     var deepBlock by remember { mutableStateOf(true) }
 
+    val matchingApps = remember(installedApps, search) {
+        val q = search.trim().lowercase()
+        if (q.isEmpty()) installedApps else installedApps.filter {
+            it.appName.lowercase().contains(q) || it.packageName.lowercase().contains(q)
+        }
+    }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add App Limit & Lock Rule") },
+        title = { Text("Block / Limit Phone App") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (installedApps.isNotEmpty()) {
-                    Text("Quick Pick Installed App:", style = MaterialTheme.typography.labelSmall)
-                    LazyColumn(modifier = Modifier.height(90.dp)) {
-                        items(installedApps.take(15)) { (pkg, name) ->
-                            TextButton(
-                                onClick = {
-                                    packageName = pkg
-                                    appName = name
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    placeholder = { Text("Search installed phone apps...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (matchingApps.isNotEmpty()) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 160.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        items(matchingApps, key = { it.packageName }) { app ->
+                            val isSelected = packageName == app.packageName
+                            Surface(
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainerHigh
                                 },
-                                modifier = Modifier.fillMaxWidth()
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .clickable {
+                                        packageName = app.packageName
+                                        appName = app.appName
+                                    }
                             ) {
-                                Text("$name ($pkg)", maxLines = 1)
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = app.appName,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "${app.minutesToday}m",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }
                 }
-                OutlinedTextField(
-                    value = appName,
-                    onValueChange = { appName = it },
-                    label = { Text("App Name") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = packageName,
-                    onValueChange = { packageName = it },
-                    label = { Text("Package Name") },
-                    singleLine = true
-                )
+                if (appName.isNotBlank()) {
+                    Text(
+                        text = "Selected: $appName",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 OutlinedTextField(
                     value = limitMins,
                     onValueChange = { limitMins = it.filter { c -> c.isDigit() } },
                     label = { Text("Daily Limit (minutes)") },
-                    singleLine = true
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text("Lock During Sleep")
@@ -658,11 +1009,12 @@ private fun AddAppRuleDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val mins = limitMins.toLongOrNull()?.coerceIn(1L, 1440L) ?: 30L
+                    val mins = limitMins.toLongOrNull()?.coerceIn(1L, 1440L) ?: 25L
                     if (packageName.isNotBlank() && appName.isNotBlank()) {
                         onConfirm(packageName.trim(), appName.trim(), mins, sleepLock, deepBlock)
                     }
-                }
+                },
+                enabled = packageName.isNotBlank() && appName.isNotBlank()
             ) { Text("Save Rule") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }

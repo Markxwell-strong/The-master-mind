@@ -61,7 +61,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.UserWorkspaceConfig
-import com.example.system.AccountSecurityHelper
 import com.example.system.ProfileMediaStorage
 import com.example.ui.components.PulseCard
 import com.example.ui.components.SectionHeaderRow
@@ -76,12 +75,14 @@ import kotlinx.coroutines.withContext
 @Composable
 fun ProfileScreen(
     viewModel: FocusPulseViewModel,
-    onBack: () -> Unit,
+    onBack: (() -> Unit)? = null,
     onOpenSettings: () -> Unit,
     onOpenAdminConsole: () -> Unit,
     onSignOut: () -> Unit
 ) {
-    BackHandler(onBack = onBack)
+    if (onBack != null) {
+        BackHandler(onBack = onBack)
+    }
 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -89,6 +90,7 @@ fun ProfileScreen(
     val photoRefreshKey by viewModel.profilePhotoRefreshKey.collectAsStateWithLifecycle()
     val myTickets by viewModel.mySupportTickets.collectAsStateWithLifecycle()
     val adminTickets by viewModel.adminSupportTickets.collectAsStateWithLifecycle()
+    val isDelegatedOrMainAdmin by viewModel.isDelegatedOrMainAdmin.collectAsStateWithLifecycle()
     val config = (configState as? UiState.Success)?.data ?: UserWorkspaceConfig()
 
     val currentUser = remember { Firebase.auth.currentUser }
@@ -97,6 +99,7 @@ fun ProfileScreen(
     var profileBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var hasPhoto by remember { mutableStateOf(false) }
     var displayNameDraft by remember(config.displayName) { mutableStateOf(config.displayName) }
+    var usernameDraft by remember(config.username) { mutableStateOf(config.username) }
 
     val uid = viewModel.currentUid
     LaunchedEffect(photoRefreshKey, uid) {
@@ -136,14 +139,16 @@ fun ProfileScreen(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                IconButton(
-                    onClick = onBack,
-                    modifier = Modifier.testTag("profile_back_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                        contentDescription = "Back"
-                    )
+                if (onBack != null) {
+                    IconButton(
+                        onClick = onBack,
+                        modifier = Modifier.testTag("profile_back_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back"
+                        )
+                    }
                 }
                 Icon(
                     imageVector = Icons.Default.Person,
@@ -152,12 +157,12 @@ fun ProfileScreen(
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Profile & Sync",
+                        text = "Profile & Account",
                         style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Avatar photo, device cloud sync & account session",
+                        text = "Username, avatar photo, cloud sync & session",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -165,13 +170,13 @@ fun ProfileScreen(
             }
         }
 
-        // Profile Photo & Display Name
+        // Profile Photo, Username & Display Name Hero
         item {
             PulseCard(accentBorder = true) {
                 Column(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     val bmp = profileBitmap
                     Box(
@@ -205,13 +210,27 @@ fun ProfileScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
+                    if (config.username.isNotBlank()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                            shape = RoundedCornerShape(999.dp)
+                        ) {
+                            Text(
+                                text = "@${config.username}",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
                     Text(
                         text = buildString {
                             append(accountEmail)
-                            if (viewModel.isAdminUser) append(" • ADMIN")
+                            if (isDelegatedOrMainAdmin) append(" • ADMIN")
                         },
                         style = MaterialTheme.typography.bodySmall,
-                        color = if (viewModel.isAdminUser) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (isDelegatedOrMainAdmin) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                     )
 
                     Row(
@@ -257,13 +276,17 @@ fun ProfileScreen(
             }
         }
 
-        if (viewModel.isAdminUser) {
+        if (isDelegatedOrMainAdmin) {
             item {
                 val pendingCount = adminTickets.count { it.status == "open" || it.status == "escalated" }
                 PulseCard(accentBorder = true) {
                     SectionHeaderRow(
                         title = "Admin Console",
-                        subtitle = "$pendingCount active support requests",
+                        subtitle = if (viewModel.isMainAdminUser) {
+                            "$pendingCount active support requests • Full administration"
+                        } else {
+                            "$pendingCount assigned support requests"
+                        },
                         icon = Icons.Default.AdminPanelSettings
                     )
                     Button(
@@ -275,36 +298,50 @@ fun ProfileScreen(
                     ) {
                         Icon(Icons.Default.AdminPanelSettings, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(8.dp))
-                        Text("Open Admin Support Queue")
+                        Text("Open Admin Console")
                     }
                 }
             }
         }
 
-        // Editable Display Name
+        // Editable Profile Identity (Display Name + Username)
         item {
             PulseCard {
                 SectionHeaderRow(
-                    title = "Display Name",
-                    subtitle = "Updates your greeting and synced profile badge",
+                    title = "Profile Identity",
+                    subtitle = "Set your display name and unique @username handle",
                     icon = Icons.Default.VerifiedUser
                 )
+                OutlinedTextField(
+                    value = usernameDraft,
+                    onValueChange = { usernameDraft = it.take(40) },
+                    label = { Text("Username") },
+                    prefix = { Text("@") },
+                    supportingText = { Text("Letters, numbers, ., _, - (shown on your profile)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_username_input")
+                )
+                Spacer(Modifier.height(6.dp))
                 OutlinedTextField(
                     value = displayNameDraft,
                     onValueChange = { displayNameDraft = it },
                     label = { Text("Display Name") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_display_name_input")
                 )
                 Spacer(Modifier.height(8.dp))
                 Button(
-                    onClick = { viewModel.updateDisplayName(displayNameDraft) },
+                    onClick = { viewModel.updateProfileIdentity(displayNameDraft, usernameDraft) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
                         .testTag("save_profile_name_button")
                 ) {
-                    Text("Save Display Name")
+                    Text("Save Profile Identity")
                 }
             }
         }
@@ -314,7 +351,7 @@ fun ProfileScreen(
                 PulseCard {
                     SectionHeaderRow(
                         title = "My Support Updates",
-                        subtitle = "Responses from Admin (${AccountSecurityHelper.ADMIN_EMAIL}) & Gemini",
+                        subtitle = "Responses from Support Admins & Gemini",
                         icon = Icons.Default.SupportAgent
                     )
                     myTickets.take(4).forEach { ticket ->
@@ -346,12 +383,12 @@ fun ProfileScreen(
             }
         }
 
-        // Cloud Sync Status (moved cleanly from Dashboard header)
+        // Cloud Sync Status
         item {
             PulseCard {
                 SectionHeaderRow(
                     title = "Real-Time Cloud Sync",
-                    subtitle = "All habits, diary logs, limits & shop inventory stay synced",
+                    subtitle = "All habits, diary logs, limits, business records & shop stock stay synced",
                     icon = Icons.Default.CloudDone
                 )
                 Surface(
@@ -387,7 +424,7 @@ fun ProfileScreen(
             }
         }
 
-        // Quick Workspace Settings & Sign Out (moved cleanly from Dashboard header)
+        // Quick Workspace Settings & Sign Out
         item {
             PulseCard {
                 OutlinedButton(

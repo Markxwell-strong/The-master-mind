@@ -377,4 +377,105 @@ test("Admin privileges (cleandemon5@gmail.com) & SupportTicket isolation", async
       updatedAt: serverNow(),
     })
   );
+
+  // Main Admin can promote Bob to delegated admin (updating ONLY role & updatedAt)
+  await assertSucceeds(
+    adminDb.collection("users").doc(BOB_UID).update({
+      role: "admin",
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Main Admin can assign support ticket to Bob via sharedAdminUids
+  await assertSucceeds(
+    adminDb.collection("supportTickets").doc("tkt_1").update({
+      sharedAdminUids: [BOB_UID],
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Promoted sub-admin Bob CAN query & reply to tickets assigned to him,
+  // but STILL CANNOT list /users (only Main Admin sees all users)
+  await assertFails(bobDb.collection("users").get());
+  await assertSucceeds(
+    bobDb.collection("supportTickets").where("sharedAdminUids", "array-contains", BOB_UID).get()
+  );
+  await assertSucceeds(
+    bobDb.collection("supportTickets").doc("tkt_1").update({
+      adminReply: "Handled by support team.",
+      status: "resolved",
+      updatedAt: serverNow(),
+    })
+  );
 });
+
+test("Business Accounting & Finances: owner-only access, immutable ledger updates, and cross-user denial", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const base = aliceDb.collection("users").doc(ALICE_UID);
+
+  // Owner initializes business account
+  const accRef = base.collection("businessAccount").doc("default");
+  await assertSucceeds(
+    accRef.set({
+      userId: ALICE_UID,
+      businessName: "Nairobi Mart",
+      isInitialized: true,
+      openingCash: 50000,
+      currentCash: 50000,
+      totalCapitalAdded: 0,
+      startedAtMillis: Date.now(),
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Owner records immutable financial ledger entry
+  const ledgerRef = base.collection("businessLedger").doc("led_1");
+  await assertSucceeds(
+    ledgerRef.set({
+      userId: ALICE_UID,
+      entryType: "expense",
+      title: "Delivery Fuel",
+      category: "Transport",
+      amount: 1200,
+      balanceAfter: 48800,
+      relatedItemId: "",
+      occurredAtMillis: Date.now(),
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Ledger entries cannot be altered (immutable audit trail)
+  await assertFails(
+    ledgerRef.update({
+      amount: 100,
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Owner creates and settles debtor record
+  const debtRef = base.collection("businessDebts").doc("debt_1");
+  await assertSucceeds(
+    debtRef.set({
+      userId: ALICE_UID,
+      personName: "Kamau Traders",
+      phone: "0700000000",
+      debtType: "debtor",
+      totalAmount: 15000,
+      settledAmount: 0,
+      note: "2 sacks rice on credit",
+      isSettled: false,
+      dueAtMillis: 0,
+      createdAt: serverNow(),
+      updatedAt: serverNow(),
+    })
+  );
+
+  // Cross-user (even Bob) cannot read or write Alice's business account, ledger, or debts
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("businessAccount").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("businessLedger").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("businessDebts").get());
+});
+

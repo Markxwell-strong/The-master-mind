@@ -15,10 +15,16 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    function isAdmin() {
+    function isMainAdmin() {
       return isSignedIn() &&
              request.auth.token.email == 'cleandemon5@gmail.com' &&
              request.auth.token.email_verified == true;
+    }
+
+    function isDelegatedAdmin() {
+      return isSignedIn() &&
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
     function isValidId(id) {
@@ -49,6 +55,7 @@ service cloud.firestore {
              data.activeDashboardId is string && data.activeDashboardId.size() >= 1 && data.activeDashboardId.size() <= 64 &&
              data.themePalette is string && data.themePalette.size() >= 1 && data.themePalette.size() <= 40 &&
              data.darkModePreference in ['system', 'dark', 'light', 'amoled'] &&
+             (!('username' in data) || (data.username is string && data.username.size() <= 40)) &&
              (!('displayName' in data) || (data.displayName is string && data.displayName.size() <= 80)) &&
              (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
              (!('role' in data) || data.role in ['member', 'admin']) &&
@@ -77,6 +84,9 @@ service cloud.firestore {
              (!('deepWorkMinutes' in data) || (data.deepWorkMinutes is int && data.deepWorkMinutes >= 5 && data.deepWorkMinutes <= 480)) &&
              (!('deepWorkDndEnabled' in data) || data.deepWorkDndEnabled is bool) &&
              (!('deepWorkActiveUntilMs' in data) || (data.deepWorkActiveUntilMs is int && data.deepWorkActiveUntilMs >= 0)) &&
+             (!('gamingModeEnabled' in data) || data.gamingModeEnabled is bool) &&
+             (!('gamingAutoDeclineCalls' in data) || data.gamingAutoDeclineCalls is bool) &&
+             (!('gamingAppPackages' in data) || (data.gamingAppPackages is list && data.gamingAppPackages.size() <= 40 && (data.gamingAppPackages.size() == 0 || data.gamingAppPackages[0] is string))) &&
              (!('inactivityAlertHours' in data) || (data.inactivityAlertHours is int && data.inactivityAlertHours >= 1 && data.inactivityAlertHours <= 48)) &&
              (!('inactivityFullScreenAlarm' in data) || data.inactivityFullScreenAlarm is bool) &&
              (!('aiCoachPersona' in data) || data.aiCoachPersona in ['balanced', 'strict', 'zen', 'business']) &&
@@ -84,41 +94,52 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow get: if (isOwner(userId) || isAdmin()) && isValidId(userId);
-      allow list: if isAdmin();
+      allow get: if (isOwner(userId) || isMainAdmin()) && isValidId(userId);
+      allow list: if isMainAdmin();
       allow create: if isOwner(userId) &&
                        isValidId(userId) &&
                        incoming().userId == request.auth.uid &&
-                       (!('role' in incoming()) || incoming().role == 'member' || (incoming().role == 'admin' && isAdmin())) &&
+                       (!('role' in incoming()) || incoming().role == 'member' || (incoming().role == 'admin' && isMainAdmin())) &&
                        incoming().keys().hasAll(['userId', 'activeDashboardId', 'themePalette', 'darkModePreference', 'createdAt', 'updatedAt']) &&
                        incoming().keys().hasOnly([
-                         'userId', 'displayName', 'email', 'role',
+                         'userId', 'username', 'displayName', 'email', 'role',
                          'activeDashboardId', 'themePalette', 'darkModePreference',
                          'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
                          'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
                          'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
                          'deepWorkMinutes', 'deepWorkDndEnabled', 'deepWorkActiveUntilMs',
+                         'gamingModeEnabled', 'gamingAutoDeclineCalls', 'gamingAppPackages',
                          'inactivityAlertHours', 'inactivityFullScreenAlarm', 'aiCoachPersona',
                          'lastActiveDevice', 'createdAt', 'updatedAt'
                        ]) &&
                        isValidTimestampsOnCreate(incoming()) &&
                        isValidWorkspaceConfig(incoming());
-      allow update: if isOwner(userId) &&
-                       isValidId(userId) &&
+      allow update: if isValidId(userId) &&
                        isValidWorkspaceConfig(incoming()) &&
                        incoming().userId == existing().userId &&
                        isValidTimestampsOnUpdate(incoming()) &&
-                       (!('role' in incoming()) || incoming().role == 'member' || (incoming().role == 'admin' && isAdmin())) &&
-                       incoming().diff(existing()).affectedKeys().hasOnly([
-                         'displayName', 'email', 'role',
-                         'activeDashboardId', 'themePalette', 'darkModePreference',
-                         'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
-                         'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
-                         'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
-                         'deepWorkMinutes', 'deepWorkDndEnabled', 'deepWorkActiveUntilMs',
-                         'inactivityAlertHours', 'inactivityFullScreenAlarm', 'aiCoachPersona',
-                         'lastActiveDevice', 'updatedAt'
-                       ]);
+                       (
+                         (
+                           isOwner(userId) &&
+                           (!('role' in incoming()) || (!('role' in existing()) && incoming().role == 'member') || incoming().role == existing().role || (incoming().role == 'admin' && isMainAdmin())) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'username', 'displayName', 'email', 'role',
+                             'activeDashboardId', 'themePalette', 'darkModePreference',
+                             'cardStyle', 'cornerRadiusDp', 'compactDensity', 'appLayoutStyle', 'navBarStyle',
+                             'partColors', 'backgroundPreset', 'backgroundOverlayAlpha', 'cardOpacity',
+                             'enabledWidgets', 'bedtimeHour', 'bedtimeMinute', 'wakeHour', 'wakeMinute', 'sleepLockEnabled',
+                             'deepWorkMinutes', 'deepWorkDndEnabled', 'deepWorkActiveUntilMs',
+                             'gamingModeEnabled', 'gamingAutoDeclineCalls', 'gamingAppPackages',
+                             'inactivityAlertHours', 'inactivityFullScreenAlarm', 'aiCoachPersona',
+                             'lastActiveDevice', 'updatedAt'
+                           ])
+                         ) ||
+                         (
+                           isMainAdmin() &&
+                           incoming().role in ['member', 'admin'] &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['role', 'updatedAt'])
+                         )
+                       );
       allow delete: if isOwner(userId) && isValidId(userId);
 
       // --- 2. AppLimitRule ---
@@ -432,6 +453,118 @@ service cloud.firestore {
                          ]);
         allow delete: if isOwner(userId) && isValidId(sessionId);
       }
+
+      // --- 9B. BusinessAccountConfig (Owner-private Business Cash & Setup) ---
+      function isValidBusinessAccount(data) {
+        return data.userId == userId &&
+               data.businessName is string && data.businessName.size() >= 1 && data.businessName.size() <= 120 &&
+               data.isInitialized is bool &&
+               data.openingCash is number && data.openingCash >= -1000000000 && data.openingCash <= 1000000000 &&
+               data.currentCash is number && data.currentCash >= -1000000000 && data.currentCash <= 1000000000 &&
+               data.totalCapitalAdded is number && data.totalCapitalAdded >= 0 && data.totalCapitalAdded <= 1000000000 &&
+               data.startedAtMillis is int && data.startedAtMillis >= 0;
+      }
+
+      match /businessAccount/{accountId} {
+        allow get: if isOwner(userId) && isValidId(accountId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(accountId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'businessName', 'isInitialized', 'openingCash',
+                           'currentCash', 'totalCapitalAdded', 'startedAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'businessName', 'isInitialized', 'openingCash',
+                           'currentCash', 'totalCapitalAdded', 'startedAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidBusinessAccount(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(accountId) &&
+                         isValidBusinessAccount(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'businessName', 'isInitialized', 'openingCash',
+                           'currentCash', 'totalCapitalAdded', 'startedAtMillis', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(accountId);
+      }
+
+      // --- 9C. BusinessLedgerEntry (Immutable Owner-private KSh Ledger) ---
+      function isValidBusinessLedger(data) {
+        return data.userId == userId &&
+               data.entryType in ['opening_balance', 'capital_add', 'expense', 'restock_deduction', 'sale_inflow', 'debtor_payment', 'creditor_payment'] &&
+               data.title is string && data.title.size() >= 1 && data.title.size() <= 140 &&
+               data.amount is number && data.amount >= 0 && data.amount <= 1000000000 &&
+               data.balanceAfter is number && data.balanceAfter >= -1000000000 && data.balanceAfter <= 1000000000 &&
+               data.occurredAtMillis is int && data.occurredAtMillis >= 0 &&
+               (!('category' in data) || (data.category is string && data.category.size() <= 60)) &&
+               (!('relatedItemId' in data) || (data.relatedItemId is string && data.relatedItemId.size() <= 128));
+      }
+
+      match /businessLedger/{entryId} {
+        allow get: if isOwner(userId) && isValidId(entryId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(entryId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'entryType', 'title', 'amount', 'balanceAfter',
+                           'occurredAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'entryType', 'title', 'category', 'amount', 'balanceAfter',
+                           'relatedItemId', 'occurredAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidBusinessLedger(incoming());
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(entryId);
+      }
+
+      // --- 9D. BusinessDebtRecord (Owner-private Debtors & Creditors) ---
+      function isValidBusinessDebt(data) {
+        return data.userId == userId &&
+               data.personName is string && data.personName.size() >= 1 && data.personName.size() <= 100 &&
+               data.debtType in ['debtor', 'creditor'] &&
+               data.totalAmount is number && data.totalAmount >= 0 && data.totalAmount <= 1000000000 &&
+               data.settledAmount is number && data.settledAmount >= 0 && data.settledAmount <= data.totalAmount &&
+               data.isSettled is bool &&
+               (!('phone' in data) || (data.phone is string && data.phone.size() <= 30)) &&
+               (!('note' in data) || (data.note is string && data.note.size() <= 400)) &&
+               (!('dueAtMillis' in data) || (data.dueAtMillis is int && data.dueAtMillis >= 0));
+      }
+
+      match /businessDebts/{debtId} {
+        allow get: if isOwner(userId) && isValidId(debtId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) &&
+                         isValidId(debtId) &&
+                         incoming().userId == request.auth.uid &&
+                         incoming().keys().hasAll([
+                           'userId', 'personName', 'debtType', 'totalAmount',
+                           'settledAmount', 'isSettled', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'personName', 'phone', 'debtType', 'totalAmount',
+                           'settledAmount', 'note', 'isSettled', 'dueAtMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         isValidTimestampsOnCreate(incoming()) &&
+                         isValidBusinessDebt(incoming());
+        allow update: if isOwner(userId) &&
+                         isValidId(debtId) &&
+                         isValidBusinessDebt(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         isValidTimestampsOnUpdate(incoming()) &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'personName', 'phone', 'debtType', 'totalAmount',
+                           'settledAmount', 'note', 'isSettled', 'dueAtMillis', 'updatedAt'
+                         ]);
+        allow delete: if isOwner(userId) && isValidId(debtId);
+      }
     }
 
     // --- 10. SupportTicket (Developer Support & Gemini AI Triage) ---
@@ -443,19 +576,28 @@ service cloud.firestore {
              (!('userEmail' in data) || (data.userEmail is string && data.userEmail.size() <= 120)) &&
              (!('aiDiagnosis' in data) || (data.aiDiagnosis is string && data.aiDiagnosis.size() <= 4000)) &&
              (!('adminReply' in data) || (data.adminReply is string && data.adminReply.size() <= 2000)) &&
-             (!('sentToWhatsApp' in data) || data.sentToWhatsApp is bool);
+             (!('sentToWhatsApp' in data) || data.sentToWhatsApp is bool) &&
+             (!('sharedAdminUids' in data) || (data.sharedAdminUids is list && data.sharedAdminUids.size() <= 10 && (data.sharedAdminUids.size() == 0 || data.sharedAdminUids[0] is string)));
     }
 
     match /supportTickets/{ticketId} {
-      allow get: if isSignedIn() && (existing().userId == request.auth.uid || isAdmin()) && isValidId(ticketId);
-      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow get: if isSignedIn() && (
+                     existing().userId == request.auth.uid ||
+                     isMainAdmin() ||
+                     (isDelegatedAdmin() && 'sharedAdminUids' in existing() && request.auth.uid in existing().sharedAdminUids)
+                   ) && isValidId(ticketId);
+      allow list: if isMainAdmin() ||
+                     (isSignedIn() && (
+                       resource.data.userId == request.auth.uid ||
+                       ('sharedAdminUids' in resource.data && request.auth.uid in resource.data.sharedAdminUids)
+                     ));
       allow create: if isSignedIn() &&
                        isValidId(ticketId) &&
                        incoming().userId == request.auth.uid &&
                        incoming().keys().hasAll(['userId', 'category', 'message', 'status', 'createdAt', 'updatedAt']) &&
                        incoming().keys().hasOnly([
                          'userId', 'userEmail', 'category', 'message',
-                         'aiDiagnosis', 'status', 'adminReply', 'sentToWhatsApp',
+                         'aiDiagnosis', 'status', 'adminReply', 'sentToWhatsApp', 'sharedAdminUids',
                          'createdAt', 'updatedAt'
                        ]) &&
                        isValidTimestampsOnCreate(incoming()) &&
@@ -471,11 +613,17 @@ service cloud.firestore {
                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'sentToWhatsApp', 'aiDiagnosis', 'updatedAt'])
                          ) ||
                          (
-                           isAdmin() &&
+                           isMainAdmin() &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminReply', 'sharedAdminUids', 'updatedAt'])
+                         ) ||
+                         (
+                           isDelegatedAdmin() &&
+                           'sharedAdminUids' in existing() &&
+                           request.auth.uid in existing().sharedAdminUids &&
                            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'adminReply', 'updatedAt'])
                          )
                        );
-      allow delete: if isAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
+      allow delete: if isMainAdmin() || (isSignedIn() && existing().userId == request.auth.uid);
     }
   }
 }

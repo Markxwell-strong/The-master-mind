@@ -1,6 +1,7 @@
 package com.example.ui.viewmodel
 
 import android.app.Application
+import android.content.Intent
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -12,6 +13,10 @@ import com.example.data.intelligence.IntelligencePipelineResult
 import com.example.data.intelligence.IntelligenceRepository
 import com.example.data.model.AppLimitRule
 import com.example.data.model.BlockedSite
+import com.example.data.model.BusinessAccountConfig
+import com.example.data.model.BusinessDebtRecord
+import com.example.data.model.BusinessFinancialSummary
+import com.example.data.model.BusinessLedgerEntry
 import com.example.data.model.DiaryEntry
 import com.example.data.model.FocusSession
 import com.example.data.model.HabitItem
@@ -20,6 +25,7 @@ import com.example.data.model.NoteItem
 import com.example.data.model.ReorderRecord
 import com.example.data.model.SupportTicket
 import com.example.data.model.UserWorkspaceConfig
+import com.example.data.model.computeBusinessFinancialSummary
 import com.example.data.preferences.AppearancePreferencesState
 import com.example.data.preferences.AppearancePreferencesStore
 import com.example.data.preferences.SavedThemePreset
@@ -35,9 +41,11 @@ import com.example.system.SleepAlarmScheduler
 import com.example.system.SleepCircadianInsights
 import com.example.system.SystemPermissionsState
 import com.example.system.UsageMonitor
+import com.example.system.formatKsh
 import com.google.firebase.firestore.FirebaseFirestoreException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +54,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -96,7 +105,8 @@ class FocusPulseViewModel(
 ) : AndroidViewModel(application) {
 
     val currentUid: String get() = currentUserId
-    val isAdminUser: Boolean = AccountSecurityHelper.isAdminEmail(userEmail)
+    val isMainAdminUser: Boolean = AccountSecurityHelper.isMainAdminEmail(userEmail)
+    val isAdminUser: Boolean get() = isMainAdminUser || currentConfigOrDefault().role == "admin"
 
     private val telemetryManager = DeviceTelemetryManager(application)
     private val usageMonitor = UsageMonitor(application)
@@ -163,6 +173,31 @@ class FocusPulseViewModel(
             .catch { Log.w(TAG, "observeReorders error", it); emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
+    val businessAccount: StateFlow<BusinessAccountConfig> =
+        repository.observeBusinessAccount(currentUserId)
+            .map { it ?: BusinessAccountConfig(userId = currentUserId) }
+            .catch { Log.w(TAG, "observeBusinessAccount error", it); emit(BusinessAccountConfig(userId = currentUserId)) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), BusinessAccountConfig(userId = currentUserId))
+
+    val businessLedger: StateFlow<List<BusinessLedgerEntry>> =
+        repository.observeBusinessLedger(currentUserId)
+            .catch { Log.w(TAG, "observeBusinessLedger error", it); emit(emptyList()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val businessDebts: StateFlow<List<BusinessDebtRecord>> =
+        repository.observeBusinessDebts(currentUserId)
+            .catch { Log.w(TAG, "observeBusinessDebts error", it); emit(emptyList()) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+
+    val businessSummary: StateFlow<BusinessFinancialSummary> = combine(
+        businessAccount,
+        inventory,
+        businessLedger,
+        businessDebts
+    ) { account, inv, ledger, debts ->
+        computeBusinessFinancialSummary(account, inv, ledger, debts)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), BusinessFinancialSummary())
+
     val diaryEntries: StateFlow<List<DiaryEntry>> =
         repository.observeDiaryEntries(currentUserId)
             .catch { Log.w(TAG, "observeDiaryEntries error", it); emit(emptyList()) }
@@ -178,18 +213,34 @@ class FocusPulseViewModel(
             .catch { Log.w(TAG, "observeMySupportTickets error", it); emit(emptyList()) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
 
+    val isDelegatedOrMainAdmin: StateFlow<Boolean> = workspaceConfig
+        .map { state ->
+            val cfg = (state as? UiState.Success)?.data
+            isMainAdminUser || cfg?.role == "admin"
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), isMainAdminUser)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
     val adminSupportTickets: StateFlow<List<SupportTicket>> =
-        if (isAdminUser) {
+        if (isMainAdminUser) {
             repository.observeAllSupportTicketsForAdmin()
                 .catch { Log.w(TAG, "observeAllSupportTicketsForAdmin error", it); emit(emptyList()) }
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
         } else {
-            flowOf(emptyList<SupportTicket>())
-                .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
+            workspaceConfig.flatMapLatest { state ->
+                val cfg = (state as? UiState.Success)?.data
+                if (cfg?.role == "admin") {
+                    repository.observeAssignedSupportTicketsForSubAdmin(currentUserId)
+                        .catch { Log.w(TAG, "observeAssignedTickets error", it); emit(emptyList()) }
+                } else {
+                    flowOf(emptyList())
+                }
+            }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
         }
 
+    // Secret Main-Admin only: only the Main Admin ever sees the user roster & promoted admins
     val adminUsers: StateFlow<List<UserWorkspaceConfig>> =
-        if (isAdminUser) {
+        if (isMainAdminUser) {
             repository.observeAllUsersForAdmin()
                 .catch { Log.w(TAG, "observeAllUsersForAdmin error", it); emit(emptyList()) }
                 .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000L), emptyList())
@@ -606,6 +657,57 @@ class FocusPulseViewModel(
         telemetryManager.openAppDetailsSettings(packageName)
     }
 
+    // --- Gaming Mode & Auto Call-Decline ---
+
+    fun setGamingModeEnabled(enabled: Boolean) {
+        updateWorkspaceConfig { it.copy(gamingModeEnabled = enabled) }
+        if (enabled && !permissions.value.callScreeningRoleGranted && !permissions.value.dndPolicyGranted) {
+            _statusBanner.value = "Gaming Mode ON. Grant Call Screening Role or DND access below to auto-decline incoming calls."
+        } else {
+            _statusBanner.value = if (enabled) {
+                "Gaming Mode ON — Incoming calls will auto-decline."
+            } else {
+                "Gaming Mode OFF."
+            }
+        }
+    }
+
+    fun setGamingAutoDeclineCalls(enabled: Boolean) {
+        updateWorkspaceConfig { it.copy(gamingAutoDeclineCalls = enabled) }
+    }
+
+    fun toggleGamingAppPackage(pkg: String) {
+        val clean = pkg.trim()
+        if (clean.isEmpty()) return
+        updateWorkspaceConfig { cfg ->
+            val current = cfg.gamingAppPackages.toMutableList()
+            if (clean in current) current.remove(clean) else current.add(clean)
+            cfg.copy(gamingAppPackages = current)
+        }
+    }
+
+    fun createCallScreeningRoleIntent(): Intent? = telemetryManager.createCallScreeningRoleIntent()
+
+    fun quickToggleAppBlock(app: AppUsageInfo, dailyLimitMinutes: Long = 25L) {
+        val existing = appRules.value.firstOrNull { it.packageName == app.packageName }
+        if (existing != null) {
+            deleteAppRule(existing.id)
+            _statusBanner.value = "Removed block rule for ${app.appName}."
+        } else {
+            saveAppRule(
+                AppLimitRule(
+                    packageName = app.packageName,
+                    appName = app.appName,
+                    category = app.categoryGuess,
+                    dailyLimitMinutes = dailyLimitMinutes,
+                    blockDuringSleep = true,
+                    blockDuringDeepWork = true
+                )
+            )
+            _statusBanner.value = "${app.appName} added to Focus & Doomscroll Shield."
+        }
+    }
+
     // --- Blocked Sites Gateway ---
 
     fun addBlockedSite(domain: String, label: String, blockAlways: Boolean) {
@@ -694,12 +796,132 @@ class FocusPulseViewModel(
         viewModelScope.launch { repository.deleteNote(noteId) }
     }
 
-    // --- Shop Inventory & Automated Reordering ---
+    // --- Shop Inventory, Business Accounting (KSh) & Automated Reordering ---
 
-    fun saveInventoryItem(item: InventoryItem) {
+    fun initializeBusinessAccount(businessName: String, openingCash: Double) {
         viewModelScope.launch {
+            repository.initializeBusinessAccount(businessName, openingCash).onSuccess {
+                _statusBanner.value = "Business account initialized with ${formatKsh(openingCash)}."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to initialize business account"
+            }
+        }
+    }
+
+    fun addBusinessCash(amount: Double, note: String = "Capital / Funds Added") {
+        if (amount <= 0.0) {
+            _statusBanner.value = "Enter an amount greater than KSh 0."
+            return
+        }
+        viewModelScope.launch {
+            repository.recordCashMovement(
+                entryType = "capital_add",
+                title = note.trim().ifBlank { "Capital / Funds Added" },
+                category = "Capital",
+                signedDeltaCash = amount,
+                capitalAdditionAmount = amount
+            ).onSuccess { newCash ->
+                _statusBanner.value = "Added ${formatKsh(amount)}. Cash balance: ${formatKsh(newCash)}."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to add business funds"
+            }
+        }
+    }
+
+    fun recordBusinessExpense(title: String, category: String, amount: Double) {
+        val cleanTitle = title.trim()
+        if (cleanTitle.isBlank() || amount <= 0.0) {
+            _statusBanner.value = "Provide expense description and amount > 0."
+            return
+        }
+        viewModelScope.launch {
+            repository.recordCashMovement(
+                entryType = "expense",
+                title = cleanTitle,
+                category = category.trim().ifBlank { "Operating" },
+                signedDeltaCash = -amount
+            ).onSuccess { newCash ->
+                _statusBanner.value = "Expense recorded (${formatKsh(amount)}). Cash balance: ${formatKsh(newCash)}."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to record expense"
+            }
+        }
+    }
+
+    fun saveDebtRecord(record: BusinessDebtRecord) {
+        if (record.personName.isBlank() || record.totalAmount <= 0.0) {
+            _statusBanner.value = "Enter person name and valid KSh amount."
+            return
+        }
+        viewModelScope.launch {
+            repository.upsertDebtRecord(record).onSuccess {
+                _statusBanner.value = if (record.debtType == "creditor") {
+                    "Creditor ${record.personName} saved."
+                } else {
+                    "Debtor ${record.personName} saved."
+                }
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to save record"
+            }
+        }
+    }
+
+    fun settleDebtRecord(record: BusinessDebtRecord, paymentAmount: Double) {
+        val pay = paymentAmount.coerceIn(0.0, record.remainingAmount)
+        if (pay <= 0.0) return
+        viewModelScope.launch {
+            val newSettled = (record.settledAmount + pay).coerceAtMost(record.totalAmount)
+            val nowSettled = newSettled >= (record.totalAmount - 0.005)
+            repository.upsertDebtRecord(
+                record.copy(settledAmount = newSettled, isSettled = nowSettled)
+            ).onSuccess {
+                val isDebtor = record.debtType != "creditor"
+                repository.recordCashMovement(
+                    entryType = if (isDebtor) "debtor_payment" else "creditor_payment",
+                    title = if (isDebtor) "Collected from ${record.personName}" else "Paid creditor ${record.personName}",
+                    category = if (isDebtor) "Debt Collection" else "Creditor Payment",
+                    signedDeltaCash = if (isDebtor) pay else -pay,
+                    relatedItemId = record.id
+                )
+                _statusBanner.value = if (isDebtor) {
+                    "Collected ${formatKsh(pay)} from ${record.personName}."
+                } else {
+                    "Paid ${formatKsh(pay)} to ${record.personName}."
+                }
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to settle balance"
+            }
+        }
+    }
+
+    fun deleteDebtRecord(debtId: String) {
+        viewModelScope.launch { repository.deleteDebtRecord(debtId) }
+    }
+
+    fun deleteLedgerEntry(entryId: String) {
+        viewModelScope.launch { repository.deleteLedgerEntry(entryId) }
+    }
+
+    fun saveInventoryItem(item: InventoryItem, deductCashForAddedStock: Boolean = true) {
+        viewModelScope.launch {
+            val previousQty = if (item.id.isNotBlank()) {
+                inventory.value.firstOrNull { it.id == item.id }?.stockQty ?: 0L
+            } else {
+                0L
+            }
+            val addedQty = (item.stockQty - previousQty).coerceAtLeast(0L)
             repository.upsertInventoryItem(item).onSuccess { savedId ->
                 val savedItem = item.copy(id = savedId)
+                if (deductCashForAddedStock && addedQty > 0L && item.unitCost > 0.0 && businessAccount.value.isInitialized) {
+                    val cost = addedQty * item.unitCost
+                    repository.recordCashMovement(
+                        entryType = "restock_deduction",
+                        title = "Restocked +$addedQty ${item.name}",
+                        category = "Restock",
+                        signedDeltaCash = -cost,
+                        relatedItemId = savedId
+                    )
+                }
                 checkAndTriggerAutoReorder(savedItem)
             }.onFailure {
                 _statusBanner.value = it.localizedMessage ?: "Failed to save inventory item"
@@ -707,7 +929,12 @@ class FocusPulseViewModel(
         }
     }
 
-    fun adjustInventoryStock(item: InventoryItem, delta: Long, recordSaleIfNegative: Boolean = false) {
+    fun adjustInventoryStock(
+        item: InventoryItem,
+        delta: Long,
+        recordSaleIfNegative: Boolean = false,
+        creditCashOnSale: Boolean = true
+    ) {
         viewModelScope.launch {
             if (delta < 0L && item.stockQty <= 0L) {
                 _statusBanner.value = "${item.name} is out of stock. Restock before recording a sale."
@@ -724,6 +951,25 @@ class FocusPulseViewModel(
                 unitsSold = item.unitsSold + actualSold
             )
             repository.upsertInventoryItem(updated).onSuccess {
+                if (delta > 0L && item.unitCost > 0.0) {
+                    val restockCost = delta * item.unitCost
+                    repository.recordCashMovement(
+                        entryType = "restock_deduction",
+                        title = "Restocked +$delta ${item.name}",
+                        category = "Restock",
+                        signedDeltaCash = -restockCost,
+                        relatedItemId = item.id
+                    )
+                } else if (actualSold > 0L && creditCashOnSale && item.unitPrice > 0.0) {
+                    val saleRevenue = actualSold * item.unitPrice
+                    repository.recordCashMovement(
+                        entryType = "sale_inflow",
+                        title = "Sold ${actualSold}x ${item.name}",
+                        category = "Sales",
+                        signedDeltaCash = saleRevenue,
+                        relatedItemId = item.id
+                    )
+                }
                 checkAndTriggerAutoReorder(updated)
             }
         }
@@ -737,7 +983,16 @@ class FocusPulseViewModel(
         viewModelScope.launch {
             val matchingItem = inventory.value.firstOrNull { it.id == reorder.itemId }
             repository.markReorderReceived(reorder, matchingItem).onSuccess {
-                _statusBanner.value = "Restocked +${reorder.quantity} units of ${reorder.itemName}."
+                if (reorder.totalCost > 0.0) {
+                    repository.recordCashMovement(
+                        entryType = "restock_deduction",
+                        title = "Received PO: ${reorder.itemName} (+${reorder.quantity})",
+                        category = "Restock",
+                        signedDeltaCash = -reorder.totalCost,
+                        relatedItemId = reorder.itemId
+                    )
+                }
+                _statusBanner.value = "Restocked +${reorder.quantity} units of ${reorder.itemName} (${formatKsh(reorder.totalCost)} deducted)."
             }.onFailure {
                 _statusBanner.value = it.localizedMessage ?: "Failed to receive order"
             }
@@ -865,13 +1120,14 @@ class FocusPulseViewModel(
         val cfg = currentConfigOrDefault()
         val lowStockCount = inventory.value.count { it.isLowStock }
         val totalRev = inventory.value.sumOf { it.totalRevenue }
+        val fin = businessSummary.value
         val todayEntry = diaryEntries.value.firstOrNull { it.dateKey == todayDateKey() }
         val contextSummary = buildString {
             appendLine("- Screen time today: ${String.format(Locale.US, "%.1f", onlineHoursToday())}h across ${_deviceApps.value.size} tracked apps")
             appendLine("- Productivity Score: ${_intelligenceState.value.analytics.dailyProductivityScore}/100")
             appendLine("- Habits completed today: ${habits.value.count { it.completedToday >= it.targetPerDay }}/${habits.value.size}")
             appendLine("- Sleep schedule: Bed ${String.format(Locale.US, "%02d:%02d", cfg.bedtimeHour, cfg.bedtimeMinute)}, Wake ${String.format(Locale.US, "%02d:%02d", cfg.wakeHour, cfg.wakeMinute)}")
-            appendLine("- Inventory SKUs: ${inventory.value.size} ($lowStockCount low stock), Revenue $${String.format(Locale.US, "%.2f", totalRev)}")
+            appendLine("- Business Inventory SKUs: ${inventory.value.size} ($lowStockCount low stock), Revenue ${formatKsh(totalRev)}, Cash ${formatKsh(fin.currentCash)}, Worth ${formatKsh(fin.businessWorth)}")
             appendLine("- Today's diary: ${todayEntry?.activitiesText?.ifBlank { "No activities logged yet" } ?: "Not started"}")
         }
 
@@ -1032,10 +1288,11 @@ class FocusPulseViewModel(
         }
     }
 
-    // --- Profile Display Name & Admin Support ---
+    // --- Profile Identity (Display Name & Username) & Admin Controls ---
 
-    fun updateDisplayName(displayName: String) {
+    fun updateProfileIdentity(displayName: String, username: String) {
         val cleanName = displayName.trim()
+        val cleanUsername = username.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "").take(40)
         if (cleanName.isBlank()) {
             _statusBanner.value = "Display name cannot be empty."
             return
@@ -1044,13 +1301,56 @@ class FocusPulseViewModel(
             val cfg = currentConfigOrDefault()
             val updated = cfg.copy(
                 displayName = cleanName,
+                username = cleanUsername,
                 email = userEmail.ifBlank { cfg.email }
             )
             repository.saveWorkspaceConfig(updated).onSuccess {
-                _statusBanner.value = "Profile name updated."
+                _statusBanner.value = "Profile updated."
             }.onFailure {
-                _statusBanner.value = it.localizedMessage ?: "Failed to update display name"
+                _statusBanner.value = it.localizedMessage ?: "Failed to update profile"
             }
+        }
+    }
+
+    fun updateUsername(username: String) {
+        val cleanUsername = username.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "").take(40)
+        if (cleanUsername.length < 3) {
+            _statusBanner.value = "Username must be at least 3 characters (letters, numbers, ., _, -)."
+            return
+        }
+        viewModelScope.launch {
+            val cfg = currentConfigOrDefault()
+            repository.saveWorkspaceConfig(cfg.copy(username = cleanUsername)).onSuccess {
+                _statusBanner.value = "Username @$cleanUsername saved."
+            }.onFailure {
+                _statusBanner.value = it.localizedMessage ?: "Failed to save username"
+            }
+        }
+    }
+
+    fun updateDisplayName(displayName: String) {
+        updateProfileIdentity(displayName, currentConfigOrDefault().username)
+    }
+
+    fun setUserAdminRole(targetUid: String, makeAdmin: Boolean) {
+        if (!isMainAdminUser) return
+        viewModelScope.launch {
+            repository.updateUserRoleByMainAdmin(targetUid, if (makeAdmin) "admin" else "member")
+                .onSuccess {
+                    _statusBanner.value = if (makeAdmin) "Promoted user to Admin." else "Changed user back to Member."
+                }
+                .onFailure {
+                    _statusBanner.value = it.localizedMessage ?: "Failed to update user role"
+                }
+        }
+    }
+
+    fun assignTicketToAdmins(ticketId: String, sharedAdminUids: List<String>) {
+        if (!isMainAdminUser) return
+        viewModelScope.launch {
+            repository.assignSupportTicketAdmins(ticketId, sharedAdminUids)
+                .onSuccess { _statusBanner.value = "Updated ticket admin assignment." }
+                .onFailure { _statusBanner.value = it.localizedMessage ?: "Failed to assign ticket" }
         }
     }
 

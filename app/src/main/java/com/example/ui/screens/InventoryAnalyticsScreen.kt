@@ -24,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
@@ -31,6 +32,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.LocalShipping
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TableChart
 import androidx.compose.material.icons.filled.Warning
@@ -41,7 +44,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -65,7 +67,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.data.model.BusinessDebtRecord
 import com.example.data.model.InventoryItem
+import com.example.system.formatKsh
+import com.example.system.formatKshSigned
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
 import com.example.ui.components.PulseBarChart
@@ -84,11 +89,21 @@ fun InventoryAnalyticsScreen(
 ) {
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
     val reorders by viewModel.reorders.collectAsStateWithLifecycle()
+    val businessAccount by viewModel.businessAccount.collectAsStateWithLifecycle()
+    val businessLedger by viewModel.businessLedger.collectAsStateWithLifecycle()
+    val businessDebts by viewModel.businessDebts.collectAsStateWithLifecycle()
+    val summary by viewModel.businessSummary.collectAsStateWithLifecycle()
 
+    var activeSection by remember { mutableIntStateOf(0) } // 0=Stock & Worth, 1=Cash & Expenses, 2=Debtors & Creditors, 3=Ledger
     var filterMode by remember { mutableIntStateOf(0) } // 0 = All Goods, 1 = Low Stock, 2 = Priced Margin Only
     var searchQuery by remember { mutableStateOf("") }
+
     var showAddSku by remember { mutableStateOf(false) }
     var editingItem by remember { mutableStateOf<InventoryItem?>(null) }
+    var showAddFundsDialog by remember { mutableStateOf(false) }
+    var showAddExpenseDialog by remember { mutableStateOf(false) }
+    var addDebtInitialType by remember { mutableStateOf<String?>(null) }
+    var settlingDebt by remember { mutableStateOf<BusinessDebtRecord?>(null) }
 
     val lowStock = remember(inventory) { inventory.filter { it.isLowStock } }
     val totalUnitsInStock = remember(inventory) { inventory.sumOf { it.stockQty } }
@@ -147,12 +162,12 @@ fun InventoryAnalyticsScreen(
                 }
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = if (showHeader) "Stock & Profit Management" else "Available Stock & Margin Table",
+                        text = if (showHeader) "Business & Stock Hub" else "Available Stock & Margin Table",
                         style = if (showHeader) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "${inventory.size} goods • $totalUnitsInStock units in stock • ${lowStock.size} low stock",
+                        text = "${inventory.size} goods • $totalUnitsInStock units • Worth ${formatKsh(summary.businessWorth, 0)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -168,229 +183,333 @@ fun InventoryAnalyticsScreen(
             }
         }
 
-        // 1. Live Stock & Profit Margin KPI Row
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                StatisticsCard(
-                    label = "Available Stock",
-                    value = "$totalUnitsInStock units",
-                    delta = "${inventory.size} goods (${lowStock.size} low)",
-                    icon = Icons.Default.Inventory2,
-                    modifier = Modifier.weight(1f)
-                )
-                StatisticsCard(
-                    label = "Profit Margin",
-                    value = if (pricedItems.isNotEmpty()) "${String.format(Locale.US, "%.1f", weightedMarginPercent)}%" else "—",
-                    delta = if (pricedItems.isNotEmpty()) {
-                        "Est. profit $${String.format(Locale.US, "%.2f", expectedStockProfit)}"
-                    } else {
-                        "Add buy & sell prices"
-                    },
-                    icon = Icons.AutoMirrored.Filled.TrendingUp,
-                    accentColor = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.weight(1f)
+        // First-Time Business Setup Banner when uninitialized
+        if (!businessAccount.isInitialized) {
+            item {
+                FirstTimeBusinessSetupCard(
+                    onInitialize = { name, openingCash ->
+                        viewModel.initializeBusinessAccount(name, openingCash)
+                    }
                 )
             }
         }
 
-        // 2. Financial Summary Card (Stock Valuation + Realized P&L)
-        item {
-            GlassCard(accentBorder = true) {
-                SectionHeaderRow(
-                    title = "Stock Valuation & Profit Summary",
-                    subtitle = "${pricedItems.size} of ${inventory.size} items have both buying & selling prices",
-                    icon = Icons.Default.AccountBalanceWallet
-                )
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    FinanceStat("Buying Value", "$${String.format(Locale.US, "%.2f", totalValuation)}")
-                    FinanceStat("Selling Value", "$${String.format(Locale.US, "%.2f", retailValue)}")
-                    FinanceStat(
-                        "Stock Profit",
-                        "$${String.format(Locale.US, "%.2f", expectedStockProfit)}",
-                        highlight = expectedStockProfit >= 0.0
-                    )
-                }
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    FinanceStat("Sales Revenue", "$${String.format(Locale.US, "%.2f", totalRevenue)}")
-                    FinanceStat("Sales COGS", "$${String.format(Locale.US, "%.2f", totalCogs)}")
-                    FinanceStat(
-                        "Realized Margin",
-                        if (totalRevenue > 0.0) "${String.format(Locale.US, "%.1f", realizedMarginPercent)}%" else "—",
-                        highlight = grossProfit >= 0.0
-                    )
-                }
+        // Excessive Loan Warning Banner whenever debtors > cash
+        if (summary.showLoanWarning) {
+            item {
+                ExcessiveLoanWarningCard(summary = summary)
             }
         }
 
-        // 3. Available Stock & Profit Margin Table (All Goods in One View)
+        // Owner-Private Business Worth & Profit/Loss Banner
+        if (businessAccount.isInitialized || businessLedger.isNotEmpty() || businessDebts.isNotEmpty()) {
+            item {
+                BusinessWorthBanner(
+                    account = businessAccount,
+                    summary = summary,
+                    onAddFundsClick = { showAddFundsDialog = true },
+                    onAddExpenseClick = { showAddExpenseDialog = true }
+                )
+            }
+        }
+
+        // Sub-section Switcher Chips
         item {
-            GlassCard {
-                SectionHeaderRow(
-                    title = "Available Stock & Goods Table",
-                    subtitle = "Scroll horizontally to view Buying, Selling, Profit/Unit, Margin %, and quick stock adjustments",
-                    icon = Icons.Default.TableChart
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(
+                    selected = activeSection == 0,
+                    onClick = { activeSection = 0 },
+                    label = { Text("Stock & Valuation") },
+                    leadingIcon = { Icon(Icons.Default.TableChart, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("business_tab_stock")
                 )
-
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Filter by product name, SKU, category, or supplier...") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("stock_search_input")
+                FilterChip(
+                    selected = activeSection == 1,
+                    onClick = { activeSection = 1 },
+                    label = { Text("Cash & Expenses") },
+                    leadingIcon = { Icon(Icons.Default.Payments, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("business_tab_expenses")
                 )
+                FilterChip(
+                    selected = activeSection == 2,
+                    onClick = { activeSection = 2 },
+                    label = { Text("Debtors & Creditors (${businessDebts.size})") },
+                    leadingIcon = { Icon(Icons.Default.People, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("business_tab_debts")
+                )
+                FilterChip(
+                    selected = activeSection == 3,
+                    onClick = { activeSection = 3 },
+                    label = { Text("Records (${businessLedger.size})") },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.ReceiptLong, null, Modifier.size(16.dp)) },
+                    modifier = Modifier.testTag("business_tab_ledger")
+                )
+            }
+        }
 
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = filterMode == 0,
-                        onClick = { filterMode = 0 },
-                        label = { Text("All (${inventory.size})") }
-                    )
-                    FilterChip(
-                        selected = filterMode == 1,
-                        onClick = { filterMode = 1 },
-                        label = { Text("Low Stock (${lowStock.size})") }
-                    )
-                    FilterChip(
-                        selected = filterMode == 2,
-                        onClick = { filterMode = 2 },
-                        label = { Text("Priced (${pricedItems.size})") }
+        when (activeSection) {
+            1 -> {
+                item {
+                    CashAndExpensesSection(
+                        summary = summary,
+                        ledger = businessLedger,
+                        onAddFundsClick = { showAddFundsDialog = true },
+                        onAddExpenseClick = { showAddExpenseDialog = true },
+                        onDeleteEntry = { viewModel.deleteLedgerEntry(it) }
                     )
                 }
+            }
 
-                if (filteredInventory.isEmpty()) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(
-                            text = if (inventory.isEmpty()) {
-                                "No stock items yet. Add goods with optional buying & selling prices to auto-calculate profit margins."
-                            } else {
-                                "No items match your current filter."
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center
+            2 -> {
+                item {
+                    DebtorsAndCreditorsSection(
+                        debts = businessDebts,
+                        summary = summary,
+                        onAddDebtClick = { type -> addDebtInitialType = type },
+                        onSettleRecord = { rec -> settlingDebt = rec },
+                        onDeleteRecord = { id -> viewModel.deleteDebtRecord(id) }
+                    )
+                }
+            }
+
+            3 -> {
+                item {
+                    FinancialLedgerSection(
+                        ledger = businessLedger,
+                        onDeleteEntry = { id -> viewModel.deleteLedgerEntry(id) }
+                    )
+                }
+            }
+
+            else -> {
+                // 1. Live Stock & Profit Margin KPI Row (KSh)
+                item {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        StatisticsCard(
+                            label = "Available Stock",
+                            value = "$totalUnitsInStock units",
+                            delta = "${inventory.size} goods (${lowStock.size} low)",
+                            icon = Icons.Default.Inventory2,
+                            modifier = Modifier.weight(1f)
                         )
-                        if (inventory.isEmpty()) {
-                            GlassButton(
-                                text = "Add First Stock Item",
-                                icon = Icons.Default.Add,
-                                onClick = { showAddSku = true },
-                                modifier = Modifier.fillMaxWidth()
+                        StatisticsCard(
+                            label = "Profit Margin",
+                            value = if (pricedItems.isNotEmpty()) "${String.format(Locale.US, "%.1f", weightedMarginPercent)}%" else "—",
+                            delta = if (pricedItems.isNotEmpty()) {
+                                "Est. ${formatKsh(expectedStockProfit, 0)}"
+                            } else {
+                                "Add buy & sell prices"
+                            },
+                            icon = Icons.AutoMirrored.Filled.TrendingUp,
+                            accentColor = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                // 2. Financial Summary Card (Stock Valuation + Realized P&L in KSh)
+                item {
+                    GlassCard(accentBorder = true) {
+                        SectionHeaderRow(
+                            title = "Stock Valuation & Profit Summary",
+                            subtitle = "${pricedItems.size} of ${inventory.size} items have both buying & selling prices",
+                            icon = Icons.Default.AccountBalanceWallet
+                        )
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            FinanceStat("Buying Value", formatKsh(totalValuation))
+                            FinanceStat("Selling Value", formatKsh(retailValue))
+                            FinanceStat(
+                                "Stock Profit",
+                                formatKsh(expectedStockProfit),
+                                highlight = expectedStockProfit >= 0.0
+                            )
+                        }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            FinanceStat("Sales Revenue", formatKsh(totalRevenue))
+                            FinanceStat("Sales COGS", formatKsh(totalCogs))
+                            FinanceStat(
+                                "Realized Margin",
+                                if (totalRevenue > 0.0) "${String.format(Locale.US, "%.1f", realizedMarginPercent)}%" else "—",
+                                highlight = grossProfit >= 0.0
                             )
                         }
                     }
-                } else {
-                    StockInventoryTable(
-                        items = filteredInventory,
-                        onSellOne = { viewModel.adjustInventoryStock(it, -1L, recordSaleIfNegative = true) },
-                        onAddOne = { viewModel.adjustInventoryStock(it, +1L) },
-                        onAddFive = { viewModel.adjustInventoryStock(it, +5L) },
-                        onEdit = { editingItem = it },
-                        onDelete = { viewModel.deleteInventoryItem(it.id) }
-                    )
                 }
-            }
-        }
 
-        // 4. Low-Stock Alerts & Automated Supplier Reorders in the Same View
-        item {
-            GlassCard(accentBorder = lowStock.isNotEmpty()) {
-                SectionHeaderRow(
-                    title = "Low-Stock Alerts & Auto-Reorders",
-                    subtitle = "${lowStock.size} low-stock alerts • ${reorders.count { it.status != "received" }} active supplier orders",
-                    icon = if (lowStock.isNotEmpty()) Icons.Default.Warning else Icons.Default.LocalShipping
-                )
-
-                if (lowStock.isNotEmpty()) {
-                    lowStock.forEach { item ->
-                        Text(
-                            text = "• ${item.name} (${item.sku}): ${item.stockQty} left (alert <= ${item.lowStockThreshold})",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.Medium
+                // 3. Available Stock & Profit Margin Table (All Goods in One View)
+                item {
+                    GlassCard {
+                        SectionHeaderRow(
+                            title = "Available Stock & Goods Table",
+                            subtitle = "Restocking (+1 / +5) automatically deducts cost from business cash in KSh",
+                            icon = Icons.Default.TableChart
                         )
-                    }
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
-                }
 
-                if (reorders.isEmpty()) {
-                    Text(
-                        text = "No supplier reorders queued. Items with Auto-Reorder ON generate purchase orders automatically when stock drops below threshold.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Text(
-                        text = "Total Reorder Spend: $${String.format(Locale.US, "%.2f", reorderSpend)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.secondary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    reorders.take(6).forEach { order ->
-                        Surface(
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Filter by product name, SKU, category, or supplier...") },
+                            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("stock_search_input")
+                        )
+
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = filterMode == 0,
+                                onClick = { filterMode = 0 },
+                                label = { Text("All (${inventory.size})") }
+                            )
+                            FilterChip(
+                                selected = filterMode == 1,
+                                onClick = { filterMode = 1 },
+                                label = { Text("Low Stock (${lowStock.size})") }
+                            )
+                            FilterChip(
+                                selected = filterMode == 2,
+                                onClick = { filterMode = 2 },
+                                label = { Text("Priced (${pricedItems.size})") }
+                            )
+                        }
+
+                        if (filteredInventory.isEmpty()) {
+                            Column(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                    .padding(vertical = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("${order.itemName} (+${order.quantity})", fontWeight = FontWeight.Bold)
-                                    Text(
-                                        "${order.supplierName} • $${String.format(Locale.US, "%.2f", order.totalCost)} • ${order.status.uppercase()}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                Text(
+                                    text = if (inventory.isEmpty()) {
+                                        "No stock items yet. Add goods with optional buying & selling prices in KSh to auto-calculate profit margins."
+                                    } else {
+                                        "No items match your current filter."
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center
+                                )
+                                if (inventory.isEmpty()) {
+                                    GlassButton(
+                                        text = "Add First Stock Item",
+                                        icon = Icons.Default.Add,
+                                        onClick = { showAddSku = true },
+                                        modifier = Modifier.fillMaxWidth()
                                     )
                                 }
-                                if (order.status != "received") {
-                                    Button(onClick = { viewModel.receiveReorder(order) }) {
-                                        Text("Receive")
+                            }
+                        } else {
+                            StockInventoryTable(
+                                items = filteredInventory,
+                                onSellOne = { viewModel.adjustInventoryStock(it, -1L, recordSaleIfNegative = true) },
+                                onAddOne = { viewModel.adjustInventoryStock(it, +1L) },
+                                onAddFive = { viewModel.adjustInventoryStock(it, +5L) },
+                                onEdit = { editingItem = it },
+                                onDelete = { viewModel.deleteInventoryItem(it.id) }
+                            )
+                        }
+                    }
+                }
+
+                // 4. Low-Stock Alerts & Automated Supplier Reorders
+                item {
+                    GlassCard(accentBorder = lowStock.isNotEmpty()) {
+                        SectionHeaderRow(
+                            title = "Low-Stock Alerts & Auto-Reorders",
+                            subtitle = "${lowStock.size} low-stock alerts • ${reorders.count { it.status != "received" }} active supplier orders",
+                            icon = if (lowStock.isNotEmpty()) Icons.Default.Warning else Icons.Default.LocalShipping
+                        )
+
+                        if (lowStock.isNotEmpty()) {
+                            lowStock.forEach { item ->
+                                Text(
+                                    text = "• ${item.name} (${item.sku}): ${item.stockQty} left (alert <= ${item.lowStockThreshold})",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                        }
+
+                        if (reorders.isEmpty()) {
+                            Text(
+                                text = "No supplier reorders queued. Receiving POs automatically deducts cost from business cash.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "Total Reorder Spend: ${formatKsh(reorderSpend)}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.secondary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            reorders.take(6).forEach { order ->
+                                Surface(
+                                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f),
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text("${order.itemName} (+${order.quantity})", fontWeight = FontWeight.Bold)
+                                            Text(
+                                                "${order.supplierName} • ${formatKsh(order.totalCost)} • ${order.status.uppercase()}",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        if (order.status != "received") {
+                                            Button(onClick = { viewModel.receiveReorder(order) }) {
+                                                Text("Receive")
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
-            }
-        }
 
-        // 5. Stock Valuation & Profit Charts in the Same View
-        if (inventory.isNotEmpty()) {
-            item {
-                GlassCard {
-                    SectionHeaderRow(
-                        title = "Stock Value & Profit Charts",
-                        subtitle = "Top goods by retail valuation and profit velocity",
-                        icon = Icons.AutoMirrored.Filled.TrendingUp
-                    )
-                    val top = inventory.sortedByDescending { it.retailValuation.coerceAtLeast(it.totalValuation) }.take(6)
-                    PulseBarChart(
-                        values = top.map { it.retailValuation.coerceAtLeast(it.totalValuation).toFloat().coerceAtLeast(0f) },
-                        labels = top.map { it.sku.ifBlank { it.name.take(6) } }
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text("Expected Stock Profit by SKU", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-                    PulseTrendSparkline(
-                        points = inventory.take(8).map {
-                            (if (it.hasBuyingAndSellingPrice) it.expectedStockProfit else it.grossProfit)
-                                .toFloat()
-                                .coerceAtLeast(0f)
+                // 5. Stock Valuation & Profit Charts
+                if (inventory.isNotEmpty()) {
+                    item {
+                        GlassCard {
+                            SectionHeaderRow(
+                                title = "Stock Value & Profit Charts",
+                                subtitle = "Top goods by retail valuation and profit velocity (KSh)",
+                                icon = Icons.AutoMirrored.Filled.TrendingUp
+                            )
+                            val top = inventory.sortedByDescending { it.retailValuation.coerceAtLeast(it.totalValuation) }.take(6)
+                            PulseBarChart(
+                                values = top.map { it.retailValuation.coerceAtLeast(it.totalValuation).toFloat().coerceAtLeast(0f) },
+                                labels = top.map { it.sku.ifBlank { it.name.take(6) } }
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text("Expected Stock Profit by SKU", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                            PulseTrendSparkline(
+                                points = inventory.take(8).map {
+                                    (if (it.hasBuyingAndSellingPrice) it.expectedStockProfit else it.grossProfit)
+                                        .toFloat()
+                                        .coerceAtLeast(0f)
+                                }
+                            )
                         }
-                    )
+                    }
                 }
             }
         }
@@ -401,9 +520,10 @@ fun InventoryAnalyticsScreen(
     if (showAddSku) {
         InventoryFormDialog(
             existing = null,
+            businessInitialized = businessAccount.isInitialized,
             onDismiss = { showAddSku = false },
-            onConfirm = { item ->
-                viewModel.saveInventoryItem(item)
+            onConfirm = { item, deductCash ->
+                viewModel.saveInventoryItem(item, deductCashForAddedStock = deductCash)
                 showAddSku = false
             }
         )
@@ -413,10 +533,55 @@ fun InventoryAnalyticsScreen(
     if (currentEdit != null) {
         InventoryFormDialog(
             existing = currentEdit,
+            businessInitialized = businessAccount.isInitialized,
             onDismiss = { editingItem = null },
-            onConfirm = { updated ->
-                viewModel.saveInventoryItem(updated)
+            onConfirm = { updated, deductCash ->
+                viewModel.saveInventoryItem(updated, deductCashForAddedStock = deductCash)
                 editingItem = null
+            }
+        )
+    }
+
+    if (showAddFundsDialog) {
+        AddFundsDialog(
+            onDismiss = { showAddFundsDialog = false },
+            onConfirm = { amount, note ->
+                viewModel.addBusinessCash(amount, note)
+                showAddFundsDialog = false
+            }
+        )
+    }
+
+    if (showAddExpenseDialog) {
+        AddExpenseDialog(
+            onDismiss = { showAddExpenseDialog = false },
+            onConfirm = { title, cat, amount ->
+                viewModel.recordBusinessExpense(title, cat, amount)
+                showAddExpenseDialog = false
+            }
+        )
+    }
+
+    val debtTypeDraft = addDebtInitialType
+    if (debtTypeDraft != null) {
+        AddDebtDialog(
+            initialType = debtTypeDraft,
+            onDismiss = { addDebtInitialType = null },
+            onConfirm = { rec ->
+                viewModel.saveDebtRecord(rec)
+                addDebtInitialType = null
+            }
+        )
+    }
+
+    val activeSettle = settlingDebt
+    if (activeSettle != null) {
+        SettleDebtDialog(
+            record = activeSettle,
+            onDismiss = { settlingDebt = null },
+            onConfirm = { pay ->
+                viewModel.settleDebtRecord(activeSettle, pay)
+                settlingDebt = null
             }
         )
     }
@@ -435,11 +600,11 @@ private fun StockInventoryTable(
 
     val colProduct: Dp = 154.dp
     val colStock: Dp = 148.dp
-    val colBuy: Dp = 84.dp
-    val colSell: Dp = 84.dp
-    val colProfitUnit: Dp = 94.dp
+    val colBuy: Dp = 98.dp
+    val colSell: Dp = 98.dp
+    val colProfitUnit: Dp = 104.dp
     val colMargin: Dp = 86.dp
-    val colStockProfit: Dp = 98.dp
+    val colStockProfit: Dp = 110.dp
     val colSoldActions: Dp = 128.dp
 
     val totalUnits = items.sumOf { it.stockQty }
@@ -463,7 +628,6 @@ private fun StockInventoryTable(
                 .fillMaxWidth()
                 .horizontalScroll(scrollState)
         ) {
-            // Table Header Row
             Row(
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.16f))
@@ -472,8 +636,8 @@ private fun StockInventoryTable(
             ) {
                 TableHeaderCell("Product / SKU", colProduct)
                 TableHeaderCell("Available Stock", colStock)
-                TableHeaderCell("Buying", colBuy, alignEnd = true)
-                TableHeaderCell("Selling", colSell, alignEnd = true)
+                TableHeaderCell("Buying (KSh)", colBuy, alignEnd = true)
+                TableHeaderCell("Selling (KSh)", colSell, alignEnd = true)
                 TableHeaderCell("Profit/Unit", colProfitUnit, alignEnd = true)
                 TableHeaderCell("Margin %", colMargin, alignEnd = true)
                 TableHeaderCell("Stock Profit", colStockProfit, alignEnd = true)
@@ -482,7 +646,6 @@ private fun StockInventoryTable(
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f))
 
-            // Table Data Rows
             items.forEachIndexed { index, item ->
                 val rowBg = if (index % 2 == 1) {
                     MaterialTheme.colorScheme.onSurface.copy(alpha = 0.03f)
@@ -501,7 +664,6 @@ private fun StockInventoryTable(
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Product / SKU
                     Column(modifier = Modifier.width(colProduct)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -539,7 +701,6 @@ private fun StockInventoryTable(
                         )
                     }
 
-                    // Available Stock + inline quick -1 / +1 / +5 buttons
                     Column(
                         modifier = Modifier.width(colStock),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -569,36 +730,30 @@ private fun StockInventoryTable(
                         }
                     }
 
-                    // Buying Price
                     TableValueCell(
-                        text = if (item.unitCost > 0.0) "$${String.format(Locale.US, "%.2f", item.unitCost)}" else "—",
+                        text = if (item.unitCost > 0.0) formatKsh(item.unitCost) else "—",
                         width = colBuy,
                         muted = item.unitCost <= 0.0
                     )
 
-                    // Selling Price
                     TableValueCell(
-                        text = if (item.unitPrice > 0.0) "$${String.format(Locale.US, "%.2f", item.unitPrice)}" else "—",
+                        text = if (item.unitPrice > 0.0) formatKsh(item.unitPrice) else "—",
                         width = colSell,
                         muted = item.unitPrice <= 0.0
                     )
 
-                    // Profit / Unit
                     val profitColor = when {
                         !hasPrices -> MaterialTheme.colorScheme.onSurfaceVariant
                         profitUnit >= 0.0 -> MaterialTheme.colorScheme.primary
                         else -> MaterialTheme.colorScheme.error
                     }
                     TableValueCell(
-                        text = if (hasPrices) {
-                            "${if (profitUnit >= 0) "+" else ""}$${String.format(Locale.US, "%.2f", profitUnit)}"
-                        } else "—",
+                        text = if (hasPrices) formatKshSigned(profitUnit) else "—",
                         width = colProfitUnit,
                         color = profitColor,
                         bold = hasPrices
                     )
 
-                    // Profit Margin %
                     Box(
                         modifier = Modifier.width(colMargin),
                         contentAlignment = Alignment.CenterEnd
@@ -626,15 +781,13 @@ private fun StockInventoryTable(
                         }
                     }
 
-                    // Expected Profit on Available Stock
                     TableValueCell(
-                        text = if (hasPrices) "$${String.format(Locale.US, "%.2f", stockProfit)}" else "—",
+                        text = if (hasPrices) formatKsh(stockProfit) else "—",
                         width = colStockProfit,
                         color = if (!hasPrices) MaterialTheme.colorScheme.onSurfaceVariant else if (stockProfit >= 0.0) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.error,
                         bold = hasPrices
                     )
 
-                    // Sold & Edit/Delete Actions
                     Row(
                         modifier = Modifier.width(colSoldActions),
                         verticalAlignment = Alignment.CenterVertically,
@@ -667,7 +820,6 @@ private fun StockInventoryTable(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             }
 
-            // Table Totals Footer Row
             Row(
                 modifier = Modifier
                     .background(MaterialTheme.colorScheme.secondary.copy(alpha = 0.14f))
@@ -687,12 +839,12 @@ private fun StockInventoryTable(
                     modifier = Modifier.width(colStock)
                 )
                 TableValueCell(
-                    text = "$${String.format(Locale.US, "%.2f", totalBuyVal)}",
+                    text = formatKsh(totalBuyVal),
                     width = colBuy,
                     bold = true
                 )
                 TableValueCell(
-                    text = "$${String.format(Locale.US, "%.2f", totalSellVal)}",
+                    text = formatKsh(totalSellVal),
                     width = colSell,
                     bold = true
                 )
@@ -708,7 +860,7 @@ private fun StockInventoryTable(
                     bold = true
                 )
                 TableValueCell(
-                    text = "$${String.format(Locale.US, "%.2f", totalExpProfit)}",
+                    text = formatKsh(totalExpProfit),
                     width = colStockProfit,
                     color = MaterialTheme.colorScheme.secondary,
                     bold = true
@@ -813,8 +965,9 @@ private fun FinanceStat(
 @Composable
 private fun InventoryFormDialog(
     existing: InventoryItem?,
+    businessInitialized: Boolean,
     onDismiss: () -> Unit,
-    onConfirm: (InventoryItem) -> Unit
+    onConfirm: (InventoryItem, deductCashFromBusiness: Boolean) -> Unit
 ) {
     val isEdit = existing != null
     var sku by remember { mutableStateOf(existing?.sku ?: "SKU-${(100..999).random()}") }
@@ -835,19 +988,7 @@ private fun InventoryFormDialog(
     }
     var supplier by remember { mutableStateOf(existing?.supplierName ?: "Direct Wholesale") }
     var autoReorder by remember { mutableStateOf(existing?.autoReorder ?: true) }
-
-    fun filterDecimal(input: String): String {
-        var dotSeen = false
-        return buildString {
-            for (ch in input) {
-                if (ch.isDigit()) append(ch)
-                else if (ch == '.' && !dotSeen) {
-                    append(ch)
-                    dotSeen = true
-                }
-            }
-        }
-    }
+    var deductRestockFromCash by remember { mutableStateOf(businessInitialized) }
 
     val draftBuy = buyingPrice.toDoubleOrNull() ?: 0.0
     val draftSell = sellingPrice.toDoubleOrNull() ?: 0.0
@@ -916,8 +1057,8 @@ private fun InventoryFormDialog(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
                             value = buyingPrice,
-                            onValueChange = { buyingPrice = filterDecimal(it) },
-                            label = { Text("Buying Price") },
+                            onValueChange = { buyingPrice = filterDecimalInput(it) },
+                            label = { Text("Buying (KSh)") },
                             placeholder = { Text("0.00") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier
@@ -927,8 +1068,8 @@ private fun InventoryFormDialog(
                         )
                         OutlinedTextField(
                             value = sellingPrice,
-                            onValueChange = { sellingPrice = filterDecimal(it) },
-                            label = { Text("Selling Price") },
+                            onValueChange = { sellingPrice = filterDecimalInput(it) },
+                            label = { Text("Selling (KSh)") },
                             placeholder = { Text("0.00") },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                             modifier = Modifier
@@ -939,7 +1080,6 @@ private fun InventoryFormDialog(
                     }
                 }
 
-                // Live Profit Margin Preview inside Dialog
                 if (hasLivePricing) {
                     item {
                         val isPositive = liveProfitPerUnit >= 0.0
@@ -960,12 +1100,12 @@ private fun InventoryFormDialog(
                                     color = if (isPositive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                                 )
                                 Text(
-                                    text = "Profit/unit: $${String.format(Locale.US, "%.2f", liveProfitPerUnit)} • Margin: ${String.format(Locale.US, "%.1f", liveMarginPct)}% • Markup: ${String.format(Locale.US, "%.1f", liveMarkupPct)}%",
+                                    text = "Profit/unit: ${formatKsh(liveProfitPerUnit)} • Margin: ${String.format(Locale.US, "%.1f", liveMarginPct)}% • Markup: ${String.format(Locale.US, "%.1f", liveMarkupPct)}%",
                                     style = MaterialTheme.typography.bodySmall,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
-                                    text = "Est. Profit on $draftQty units: $${String.format(Locale.US, "%.2f", liveStockProfit)}",
+                                    text = "Est. Profit on $draftQty units: ${formatKsh(liveStockProfit)}",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1003,6 +1143,18 @@ private fun InventoryFormDialog(
                         Switch(checked = autoReorder, onCheckedChange = { autoReorder = it })
                     }
                 }
+                if (businessInitialized) {
+                    item {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Deduct added stock cost from cash", modifier = Modifier.weight(1f))
+                            Switch(checked = deductRestockFromCash, onCheckedChange = { deductRestockFromCash = it })
+                        }
+                    }
+                }
             }
         },
         confirmButton = {
@@ -1023,7 +1175,8 @@ private fun InventoryFormDialog(
                                 unitCost = parsedCost,
                                 unitPrice = parsedPrice,
                                 supplierName = supplier.trim()
-                            )
+                            ),
+                            deductRestockFromCash
                         )
                     }
                 },

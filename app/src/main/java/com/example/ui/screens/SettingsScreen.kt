@@ -114,8 +114,9 @@ private val WallpaperScopes = listOf(
     "activities" to "Activities",
     "intelligence" to "Intelligence",
     "journal" to "Journal",
-    "settings" to "Settings",
-    "business" to "Business Ops"
+    "business" to "Business",
+    "profile" to "Profile",
+    "settings" to "Settings"
 )
 
 @OptIn(ExperimentalLayoutApi::class)

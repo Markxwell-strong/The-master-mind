@@ -3,6 +3,7 @@ package com.example.data.repository
 import com.example.base.FirestoreEmulatorTestBase
 import com.example.data.model.AppLimitRule
 import com.example.data.model.BlockedSite
+import com.example.data.model.BusinessDebtRecord
 import com.example.data.model.DiaryEntry
 import com.example.data.model.FocusSession
 import com.example.data.model.HabitItem
@@ -212,6 +213,53 @@ class FocusPulseRepositoryRuleTest : FirestoreEmulatorTestBase() {
             repo.observeMySupportTickets(aliceUid).first { list -> list.any { it.id == ticketId } }
         }
         assertTrue(tickets.any { it.id == ticketId && it.category == "ai" })
+    }
+
+    @Test
+    fun businessAccounting_ownerCrudSucceedsAndCrossUserDenied() = runBlocking {
+        val aliceUid = signInTestUser(ALICE_EMAIL)
+        val aliceRepo = FocusPulseRepository(firestore)
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            aliceRepo.initializeBusinessAccount("Savannah Traders", 25000.0).getOrThrow()
+            aliceRepo.recordCashMovement(
+                entryType = "expense",
+                title = "Shop Rent",
+                category = "Rent",
+                signedDeltaCash = -5000.0
+            ).getOrThrow()
+            aliceRepo.upsertDebtRecord(
+                BusinessDebtRecord(
+                    personName = "John Doe",
+                    debtType = "debtor",
+                    totalAmount = 8000.0,
+                    note = "Wholesale stock"
+                )
+            ).getOrThrow()
+        }
+
+        val account = withTimeout(FLOW_TIMEOUT_MS) {
+            aliceRepo.observeBusinessAccount(aliceUid).first { it != null && it.isInitialized }
+        }
+        assertEquals(20000.0, account!!.currentCash, 0.01)
+
+        val debts = withTimeout(FLOW_TIMEOUT_MS) {
+            aliceRepo.observeBusinessDebts(aliceUid).first { it.isNotEmpty() }
+        }
+        assertTrue(debts.any { it.personName == "John Doe" && it.totalAmount == 8000.0 })
+
+        signInTestUser(BOB_EMAIL)
+        val bobRepo = FocusPulseRepository(firestore)
+        try {
+            withTimeout(FLOW_TIMEOUT_MS) {
+                bobRepo.observeBusinessDebts(aliceUid).first()
+            }
+            fail("Expected PERMISSION_DENIED for cross-user access to businessDebts")
+        } catch (e: Exception) {
+            val firestoreException = e.unwrapFirestoreException()
+            assertNotNull("Expected nested FirebaseFirestoreException, got $e", firestoreException)
+            assertEquals(FirebaseFirestoreException.Code.PERMISSION_DENIED, firestoreException!!.code)
+        }
     }
 
     private companion object {

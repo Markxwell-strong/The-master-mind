@@ -6,9 +6,10 @@
       "type": "object",
       "properties": {
         "userId": { "type": "string", "description": "Authenticated user UID" },
+        "username": { "type": "string", "description": "User chosen profile handle" },
         "displayName": { "type": "string", "description": "User display name" },
         "email": { "type": "string", "description": "User email address" },
-        "role": { "type": "string", "enum": ["member", "admin"], "description": "Access role (admin for cleandemon5@gmail.com)" },
+        "role": { "type": "string", "enum": ["member", "admin"], "description": "Access role (member or delegated admin)" },
         "activeDashboardId": { "type": "string", "description": "Selected dashboard preset ID (1 of 15)" },
         "themePalette": { "type": "string", "description": "Selected accent color palette key" },
         "darkModePreference": { "type": "string", "enum": ["system", "dark", "light", "amoled"], "description": "Theme brightness mode" },
@@ -30,6 +31,9 @@
         "deepWorkMinutes": { "type": "integer", "description": "Default deep-work session length in minutes" },
         "deepWorkDndEnabled": { "type": "boolean", "description": "Silence non-essential notifications during deep work" },
         "deepWorkActiveUntilMs": { "type": "integer", "description": "Epoch ms when current deep-work session ends (0 if inactive)" },
+        "gamingModeEnabled": { "type": "boolean", "description": "Manual toggle for Gaming Mode incoming call blocker" },
+        "gamingAutoDeclineCalls": { "type": "boolean", "description": "Automatically decline all incoming calls during Gaming Mode or selected games" },
+        "gamingAppPackages": { "type": "array", "description": "Package names of user-selected games that trigger Gaming Mode" },
         "inactivityAlertHours": { "type": "integer", "description": "Hours of inactivity before gentle reminder or alarm" },
         "inactivityFullScreenAlarm": { "type": "boolean", "description": "Use full-screen alarm instead of gentle notification when inactive" },
         "aiCoachPersona": { "type": "string", "enum": ["balanced", "strict", "zen", "business"], "description": "AI Buddy coaching style" },
@@ -199,16 +203,71 @@
         "status": { "type": "string", "enum": ["open", "ai_resolved", "escalated", "resolved"] },
         "adminReply": { "type": "string" },
         "sentToWhatsApp": { "type": "boolean" },
+        "sharedAdminUids": { "type": "array" },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "category", "message", "status", "createdAt", "updatedAt"]
+    },
+    "BusinessAccountConfig": {
+      "title": "BusinessAccountConfig",
+      "description": "Owner-private business accounting baseline in KSh: opening cash, available cash, and capital injected",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "businessName": { "type": "string" },
+        "isInitialized": { "type": "boolean" },
+        "openingCash": { "type": "number" },
+        "currentCash": { "type": "number" },
+        "totalCapitalAdded": { "type": "number" },
+        "startedAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "businessName", "isInitialized", "openingCash", "currentCash", "totalCapitalAdded", "startedAtMillis", "createdAt", "updatedAt"]
+    },
+    "BusinessLedgerEntry": {
+      "title": "BusinessLedgerEntry",
+      "description": "Immutable financial transaction ledger entry in KSh for cash additions, expenses, restocks, sales, and debt settlements",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "entryType": { "type": "string", "enum": ["opening_balance", "capital_add", "expense", "restock_deduction", "sale_inflow", "debtor_payment", "creditor_payment"] },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "amount": { "type": "number" },
+        "balanceAfter": { "type": "number" },
+        "relatedItemId": { "type": "string" },
+        "occurredAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "entryType", "title", "amount", "balanceAfter", "occurredAtMillis", "createdAt", "updatedAt"]
+    },
+    "BusinessDebtRecord": {
+      "title": "BusinessDebtRecord",
+      "description": "Owner-private customer debtor (owed to business) and supplier creditor (owed by business) records in KSh",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "personName": { "type": "string" },
+        "phone": { "type": "string" },
+        "debtType": { "type": "string", "enum": ["debtor", "creditor"] },
+        "totalAmount": { "type": "number" },
+        "settledAmount": { "type": "number" },
+        "note": { "type": "string" },
+        "isSettled": { "type": "boolean" },
+        "dueAtMillis": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "personName", "debtType", "totalAmount", "settledAmount", "isSettled", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserWorkspaceConfig" },
-      "description": "Synced multi-device user preferences, 15-dashboard state, sleep/wake schedule, and deep-work configuration"
+      "description": "Synced multi-device user preferences, 15-dashboard state, sleep/wake schedule, gaming mode, and deep-work configuration"
     },
     "/users/{userId}/appRules/{ruleId}": {
       "schema": { "$ref": "#/entities/AppLimitRule" },
@@ -228,11 +287,23 @@
     },
     "/users/{userId}/inventory/{itemId}": {
       "schema": { "$ref": "#/entities/InventoryItem" },
-      "description": "Business/shop inventory items and pricing"
+      "description": "Business/shop inventory items and KSh pricing"
     },
     "/users/{userId}/reorders/{orderId}": {
       "schema": { "$ref": "#/entities/ReorderRecord" },
       "description": "Automated and manual inventory purchase reorders"
+    },
+    "/users/{userId}/businessAccount/{accountId}": {
+      "schema": { "$ref": "#/entities/BusinessAccountConfig" },
+      "description": "Owner-private business opening cash, available balance, and capital account"
+    },
+    "/users/{userId}/businessLedger/{entryId}": {
+      "schema": { "$ref": "#/entities/BusinessLedgerEntry" },
+      "description": "Owner-private KSh financial transactions (expenses, restock deductions, capital additions, sales, debt settlements)"
+    },
+    "/users/{userId}/businessDebts/{debtId}": {
+      "schema": { "$ref": "#/entities/BusinessDebtRecord" },
+      "description": "Owner-private debtors and creditors list used in net worth and loan risk calculations"
     },
     "/users/{userId}/diary/{entryId}": {
       "schema": { "$ref": "#/entities/DiaryEntry" },

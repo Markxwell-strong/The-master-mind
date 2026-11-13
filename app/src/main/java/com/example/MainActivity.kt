@@ -24,11 +24,14 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Storefront
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -86,6 +89,7 @@ import com.example.ui.theme.GlassBackgroundHost
 import com.example.ui.theme.MasterMindGlassTheme
 import com.example.ui.viewmodel.AppNotificationItem
 import com.example.ui.viewmodel.FocusPulseViewModel
+import com.example.ui.viewmodel.UiState
 import com.google.firebase.Firebase
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
@@ -96,21 +100,23 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 
 const val ROUTE_HOME = "home"
+const val ROUTE_BUSINESS = "business"
 const val ROUTE_ACTIVITIES = "activities"
 const val ROUTE_INTELLIGENCE = "intelligence"
 const val ROUTE_JOURNAL = "journal"
+const val ROUTE_PROFILE = "profile"
 const val ROUTE_SETTINGS = "settings"
 
-// Secondary module routes (kept out of primary bottom navigation bar)
-const val ROUTE_BUSINESS = "business"
-const val ROUTE_PROFILE = "profile"
+// Secondary module routes
 const val ROUTE_ADMIN = "admin"
 
 private val PrimaryDestinations = listOf(
     GlassNavDestination(ROUTE_HOME, "Home", Icons.Default.Dashboard),
+    GlassNavDestination(ROUTE_BUSINESS, "Business", Icons.Default.Storefront),
     GlassNavDestination(ROUTE_ACTIVITIES, "Activities", Icons.Default.Bolt),
     GlassNavDestination(ROUTE_INTELLIGENCE, "Intelligence", Icons.Default.Psychology),
     GlassNavDestination(ROUTE_JOURNAL, "Journal", Icons.Default.EditNote),
+    GlassNavDestination(ROUTE_PROFILE, "Profile", Icons.Default.Person),
     GlassNavDestination(ROUTE_SETTINGS, "Settings", Icons.Default.Settings)
 )
 
@@ -206,10 +212,12 @@ private fun AuthenticatedMasterMindShell(
     val bgRefreshKey by viewModel.customBgRefreshKey.collectAsStateWithLifecycle()
     val permissions by viewModel.permissions.collectAsStateWithLifecycle()
     val showPermissionsPrompt by viewModel.showPermissionsPrompt.collectAsStateWithLifecycle()
+    val workspaceState by viewModel.workspaceConfig.collectAsStateWithLifecycle()
     val notificationsFeed by viewModel.notificationsFeed.collectAsStateWithLifecycle()
 
     var showSupportDialog by remember { mutableStateOf(false) }
     var showNotificationsDialog by remember { mutableStateOf(false) }
+    var dismissedUsernamePrompt by remember(currentUserId) { mutableStateOf(false) }
 
     // Refresh permission checks automatically whenever user returns from System Settings
     DisposableEffect(lifecycleOwner) {
@@ -260,8 +268,24 @@ private fun AuthenticatedMasterMindShell(
                 onOpenAccessibility = { viewModel.openAccessibilitySettings() },
                 onOpenDndPolicy = { viewModel.openDndPolicySettings() },
                 onOpenExactAlarm = { viewModel.openExactAlarmSettings() },
+                callScreeningIntentProvider = { viewModel.createCallScreeningRoleIntent() },
                 onDismiss = { viewModel.dismissPermissionsPrompt() }
             )
+        } else if (!dismissedUsernamePrompt) {
+            val loadedCfg = (workspaceState as? UiState.Success)?.data
+            if (loadedCfg != null && loadedCfg.username.isBlank()) {
+                FirstTimeUsernameDialog(
+                    initialSuggestion = loadedCfg.displayName
+                        .lowercase()
+                        .replace(Regex("[^a-z0-9._-]"), "")
+                        .take(18),
+                    onSave = { chosen ->
+                        viewModel.updateUsername(chosen)
+                        dismissedUsernamePrompt = true
+                    },
+                    onLater = { dismissedUsernamePrompt = true }
+                )
+            }
         }
 
         if (showSupportDialog) {
@@ -331,23 +355,29 @@ private fun AuthenticatedMasterMindShell(
                                 DashboardHubScreen(
                                     viewModel = viewModel,
                                     onNavigateTab = { route -> navigateTopLevel(route) },
-                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                     onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) },
-                                    onOpenBusiness = { openSecondary(ROUTE_BUSINESS) },
+                                    onOpenBusiness = { navigateTopLevel(ROUTE_BUSINESS) },
                                     onOpenNotifications = { showNotificationsDialog = true }
+                                )
+                            }
+                            composable(ROUTE_BUSINESS) {
+                                InventoryAnalyticsScreen(
+                                    viewModel = viewModel,
+                                    onBack = null
                                 )
                             }
                             composable(ROUTE_ACTIVITIES) {
                                 ActivitiesScreen(
                                     viewModel = viewModel,
-                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                     onOpenNotifications = { showNotificationsDialog = true }
                                 )
                             }
                             composable(ROUTE_INTELLIGENCE) {
                                 IntelligenceScreen(
                                     viewModel = viewModel,
-                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                     onOpenNotifications = { showNotificationsDialog = true },
                                     onNavigateActivities = { navigateTopLevel(ROUTE_ACTIVITIES) }
                                 )
@@ -355,33 +385,27 @@ private fun AuthenticatedMasterMindShell(
                             composable(ROUTE_JOURNAL) {
                                 DiaryAndAiBuddyScreen(
                                     viewModel = viewModel,
-                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                     onOpenNotifications = { showNotificationsDialog = true }
+                                )
+                            }
+                            composable(ROUTE_PROFILE) {
+                                ProfileScreen(
+                                    viewModel = viewModel,
+                                    onBack = null,
+                                    onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) },
+                                    onOpenAdminConsole = { openSecondary(ROUTE_ADMIN) },
+                                    onSignOut = { signOut(credentialManager, scope) }
                                 )
                             }
                             composable(ROUTE_SETTINGS) {
                                 SettingsScreen(
                                     viewModel = viewModel,
                                     onBack = { navigateTopLevel(ROUTE_HOME) },
-                                    onOpenProfile = { openSecondary(ROUTE_PROFILE) },
+                                    onOpenProfile = { navigateTopLevel(ROUTE_PROFILE) },
                                     onOpenNotifications = { showNotificationsDialog = true },
-                                    onOpenBusiness = { openSecondary(ROUTE_BUSINESS) },
+                                    onOpenBusiness = { navigateTopLevel(ROUTE_BUSINESS) },
                                     onOpenSupport = { showSupportDialog = true },
-                                    onSignOut = { signOut(credentialManager, scope) }
-                                )
-                            }
-                            composable(ROUTE_BUSINESS) {
-                                InventoryAnalyticsScreen(
-                                    viewModel = viewModel,
-                                    onBack = { navController.popBackStack() }
-                                )
-                            }
-                            composable(ROUTE_PROFILE) {
-                                ProfileScreen(
-                                    viewModel = viewModel,
-                                    onBack = { navController.popBackStack() },
-                                    onOpenSettings = { navigateTopLevel(ROUTE_SETTINGS) },
-                                    onOpenAdminConsole = { openSecondary(ROUTE_ADMIN) },
                                     onSignOut = { signOut(credentialManager, scope) }
                                 )
                             }
@@ -462,6 +486,50 @@ private fun NotificationsCenterDialog(
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 TextButton(onClick = onOpenPermissions) { Text("Permissions") }
                 TextButton(onClick = onDismiss) { Text("Close") }
+            }
+        }
+    )
+}
+
+@Composable
+private fun FirstTimeUsernameDialog(
+    initialSuggestion: String,
+    onSave: (String) -> Unit,
+    onLater: () -> Unit
+) {
+    var draft by remember { mutableStateOf(initialSuggestion) }
+    val cleaned = draft.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "")
+    AlertDialog(
+        onDismissRequest = onLater,
+        title = { Text("Create Your Profile Username", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Set up a unique @username for your THE MASTER MIND profile. You can update it anytime in the Profile tab.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = draft,
+                    onValueChange = { draft = it.take(40) },
+                    label = { Text("Username (@handle)") },
+                    prefix = { Text("@") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(cleaned) },
+                enabled = cleaned.length >= 3
+            ) {
+                Text("Save Username")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onLater) {
+                Text("Later")
             }
         }
     )

@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.model.UserWorkspaceConfig
 import com.example.system.ProfileMediaStorage
+import com.example.system.formatKsh
 import com.example.ui.components.ActivityTimeline
 import com.example.ui.components.GlassButton
 import com.example.ui.components.GlassCard
@@ -108,6 +109,7 @@ fun DashboardHubScreen(
     val habits by viewModel.habits.collectAsStateWithLifecycle()
     val notes by viewModel.notes.collectAsStateWithLifecycle()
     val inventory by viewModel.inventory.collectAsStateWithLifecycle()
+    val businessSummary by viewModel.businessSummary.collectAsStateWithLifecycle()
     val reorders by viewModel.reorders.collectAsStateWithLifecycle()
     val battery by viewModel.batteryTelemetry.collectAsStateWithLifecycle()
     val sleepInsights by viewModel.sleepInsights.collectAsStateWithLifecycle()
@@ -455,8 +457,8 @@ fun DashboardHubScreen(
                 "quick_modules" -> add { mod ->
                     GlassCard(modifier = mod) {
                         SectionHeaderRow(
-                            title = "Stock, Profit Margin & Sleep Guard",
-                            subtitle = "$totalUnitsInStock units across ${inventory.size} goods • Sleep ${String.format(Locale.US, "%.1f", sleepInsights.estimatedSleepHours)}h",
+                            title = "Business, Stock & Sleep Guard",
+                            subtitle = "$totalUnitsInStock units • Worth ${formatKsh(businessSummary.businessWorth, 0)} • Sleep ${String.format(Locale.US, "%.1f", sleepInsights.estimatedSleepHours)}h",
                             icon = Icons.Default.Inventory2
                         )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -473,13 +475,21 @@ fun DashboardHubScreen(
                                 )
                             }
                             Column {
-                                Text("Gross Profit", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Text("$${totalProfit.roundToInt()}", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                Text(
+                                    text = if (businessSummary.netProfitOrLoss >= 0.0) "Net Profit" else "Net Loss",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = formatKsh(businessSummary.netProfitOrLoss, 0),
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (businessSummary.netProfitOrLoss >= 0.0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                )
                             }
                         }
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             GlassButton(
-                                text = "Stock & Profit Table",
+                                text = "Business Hub",
                                 icon = Icons.Default.Inventory2,
                                 tonal = true,
                                 onClick = onOpenBusiness,

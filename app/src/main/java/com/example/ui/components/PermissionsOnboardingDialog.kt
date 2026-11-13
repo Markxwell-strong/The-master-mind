@@ -1,6 +1,7 @@
 package com.example.ui.components
 
 import android.Manifest
+import android.content.Intent
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.NotificationsOff
+import androidx.compose.material.icons.filled.PhoneDisabled
 import androidx.compose.material.icons.filled.QueryStats
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
@@ -52,6 +54,7 @@ fun PermissionsOnboardingDialog(
     onOpenAccessibility: () -> Unit,
     onOpenDndPolicy: () -> Unit,
     onOpenExactAlarm: () -> Unit,
+    callScreeningIntentProvider: () -> Intent? = { null },
     onDismiss: () -> Unit
 ) {
     val runtimePermsToAsk = buildList {
@@ -67,12 +70,19 @@ fun PermissionsOnboardingDialog(
         onRefreshStatus()
     }
 
+    val callScreeningLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        onRefreshStatus()
+    }
+
     val allGranted = permissions.notificationsGranted &&
         permissions.microphoneGranted &&
         permissions.usageStatsGranted &&
         permissions.accessibilityEnabled &&
         permissions.dndPolicyGranted &&
-        permissions.exactAlarmGranted
+        permissions.exactAlarmGranted &&
+        permissions.callScreeningRoleGranted
 
     val needsRuntime = !permissions.notificationsGranted || !permissions.microphoneGranted
 
@@ -158,6 +168,18 @@ fun PermissionsOnboardingDialog(
                     granted = permissions.dndPolicyGranted,
                     onAction = onOpenDndPolicy
                 )
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    PermissionPromptRow(
+                        icon = Icons.Default.PhoneDisabled,
+                        title = "Gaming Call Blocker (Caller ID & Spam)",
+                        description = "Auto-declines all incoming phone calls when Gaming Mode is active.",
+                        granted = permissions.callScreeningRoleGranted,
+                        onAction = {
+                            callScreeningIntentProvider()?.let { callScreeningLauncher.launch(it) }
+                        }
+                    )
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     PermissionPromptRow(

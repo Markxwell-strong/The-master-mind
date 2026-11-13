@@ -212,7 +212,7 @@ class FocusAiRepository {
     ): Result<SupportTriageResult> {
         return try {
             val prompt = """
-                You are the Gemini Support Engineer for THE MASTER MIND Android app (Developer WhatsApp: +254707934241, Admin Email: cleandemon5@gmail.com).
+                You are the Gemini Support Engineer for THE MASTER MIND Android app (Developer WhatsApp: +254707934241).
                 A user submitted a support request:
                 - Category: $category
                 - User Issue: "$issueText"

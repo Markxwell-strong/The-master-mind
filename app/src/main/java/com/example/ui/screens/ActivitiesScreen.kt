@@ -125,7 +125,7 @@ fun ActivitiesScreen(
                 FilterChip(
                     selected = section == 1,
                     onClick = { section = 1 },
-                    label = { Text("Shield, Sleep & Focus") },
+                    label = { Text("Shield, Sleep & Gaming") },
                     leadingIcon = { Icon(Icons.Default.Shield, null, Modifier.size(16.dp)) },
                     modifier = Modifier.testTag("activities_tab_shield")
                 )

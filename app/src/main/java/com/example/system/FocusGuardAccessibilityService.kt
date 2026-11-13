@@ -25,6 +25,7 @@ class FocusGuardAccessibilityService : AccessibilityService() {
         }
 
         val pkg = event.packageName?.toString() ?: return
+        guardPrefs.recordForegroundPackage(pkg)
         if (pkg == packageName || pkg == "com.android.systemui" || pkg.contains("launcher")) {
             return
         }

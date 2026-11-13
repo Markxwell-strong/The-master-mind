@@ -4,12 +4,14 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.IgnoreExtraProperties
+import com.google.firebase.firestore.PropertyName
 import com.google.firebase.firestore.ServerTimestamp
 
 @IgnoreExtraProperties
 data class UserWorkspaceConfig(
     @DocumentId val id: String = "",
     val userId: String = "",
+    val username: String = "",
     val displayName: String = "",
     val email: String = "",
     val role: String = "member",
@@ -43,6 +45,9 @@ data class UserWorkspaceConfig(
     val deepWorkMinutes: Long = 45L,
     val deepWorkDndEnabled: Boolean = true,
     val deepWorkActiveUntilMs: Long = 0L,
+    val gamingModeEnabled: Boolean = false,
+    val gamingAutoDeclineCalls: Boolean = true,
+    val gamingAppPackages: List<String> = emptyList(),
     val inactivityAlertHours: Long = 3L,
     val inactivityFullScreenAlarm: Boolean = false,
     val aiCoachPersona: String = "balanced",
@@ -60,8 +65,12 @@ data class UserWorkspaceConfig(
             .associate { (k, v) -> k to v.trim().uppercase() }
     }
 
+    private fun sanitizedUsername(): String =
+        username.trim().lowercase().replace(Regex("[^a-z0-9._-]"), "").take(40)
+
     fun toCreateMap(uid: String, deviceName: String): Map<String, Any> = mapOf(
         "userId" to uid,
+        "username" to sanitizedUsername(),
         "displayName" to displayName.take(80),
         "email" to email.trim().lowercase().take(120),
         "role" to if (role == "admin") "admin" else "member",
@@ -86,6 +95,9 @@ data class UserWorkspaceConfig(
         "deepWorkMinutes" to deepWorkMinutes.coerceIn(5L, 480L),
         "deepWorkDndEnabled" to deepWorkDndEnabled,
         "deepWorkActiveUntilMs" to deepWorkActiveUntilMs.coerceAtLeast(0L),
+        "gamingModeEnabled" to gamingModeEnabled,
+        "gamingAutoDeclineCalls" to gamingAutoDeclineCalls,
+        "gamingAppPackages" to gamingAppPackages.map { it.trim().take(180) }.filter { it.isNotBlank() }.distinct().take(40),
         "inactivityAlertHours" to inactivityAlertHours.coerceIn(1L, 48L),
         "inactivityFullScreenAlarm" to inactivityFullScreenAlarm,
         "aiCoachPersona" to aiCoachPersona,
@@ -95,6 +107,7 @@ data class UserWorkspaceConfig(
     )
 
     fun toUpdateMap(deviceName: String): Map<String, Any> = mapOf(
+        "username" to sanitizedUsername(),
         "displayName" to displayName.take(80),
         "email" to email.trim().lowercase().take(120),
         "role" to if (role == "admin") "admin" else "member",
@@ -119,6 +132,9 @@ data class UserWorkspaceConfig(
         "deepWorkMinutes" to deepWorkMinutes.coerceIn(5L, 480L),
         "deepWorkDndEnabled" to deepWorkDndEnabled,
         "deepWorkActiveUntilMs" to deepWorkActiveUntilMs.coerceAtLeast(0L),
+        "gamingModeEnabled" to gamingModeEnabled,
+        "gamingAutoDeclineCalls" to gamingAutoDeclineCalls,
+        "gamingAppPackages" to gamingAppPackages.map { it.trim().take(180) }.filter { it.isNotBlank() }.distinct().take(40),
         "inactivityAlertHours" to inactivityAlertHours.coerceIn(1L, 48L),
         "inactivityFullScreenAlarm" to inactivityFullScreenAlarm,
         "aiCoachPersona" to aiCoachPersona,
@@ -138,6 +154,7 @@ data class AppLimitRule(
     val todayUsedMinutes: Long = 0L,
     val blockDuringSleep: Boolean = true,
     val blockDuringDeepWork: Boolean = true,
+    @field:PropertyName("isLocked") @get:PropertyName("isLocked")
     val isLocked: Boolean = false,
     val lockedUntilMillis: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -248,7 +265,9 @@ data class NoteItem(
     val title: String = "",
     val content: String = "",
     val category: String = "note",
+    @field:PropertyName("isPinned") @get:PropertyName("isPinned")
     val isPinned: Boolean = false,
+    @field:PropertyName("isCompleted") @get:PropertyName("isCompleted")
     val isCompleted: Boolean = false,
     val reminderAtMillis: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -372,6 +391,7 @@ data class ReorderRecord(
     val totalCost: Double = 0.0,
     val supplierName: String = "",
     val status: String = "ordered",
+    @field:PropertyName("isAutoTriggered") @get:PropertyName("isAutoTriggered")
     val isAutoTriggered: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
@@ -470,6 +490,7 @@ data class SupportTicket(
     val status: String = "open",
     val adminReply: String = "",
     val sentToWhatsApp: Boolean = false,
+    val sharedAdminUids: List<String> = emptyList(),
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 ) {
@@ -482,7 +503,180 @@ data class SupportTicket(
         "status" to status,
         "adminReply" to adminReply.take(2000),
         "sentToWhatsApp" to sentToWhatsApp,
+        "sharedAdminUids" to sharedAdminUids.take(10),
         "createdAt" to FieldValue.serverTimestamp(),
         "updatedAt" to FieldValue.serverTimestamp()
+    )
+}
+
+@IgnoreExtraProperties
+data class BusinessAccountConfig(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val businessName: String = "",
+    @field:PropertyName("isInitialized") @get:PropertyName("isInitialized")
+    val isInitialized: Boolean = false,
+    val openingCash: Double = 0.0,
+    val currentCash: Double = 0.0,
+    val totalCapitalAdded: Double = 0.0,
+    val startedAtMillis: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun toCreateMap(uid: String): Map<String, Any> = mapOf(
+        "userId" to uid,
+        "businessName" to businessName.trim().take(120),
+        "isInitialized" to isInitialized,
+        "openingCash" to openingCash.coerceIn(-1000000000.0, 1000000000.0),
+        "currentCash" to currentCash.coerceIn(-1000000000.0, 1000000000.0),
+        "totalCapitalAdded" to totalCapitalAdded.coerceIn(0.0, 1000000000.0),
+        "startedAtMillis" to startedAtMillis.coerceAtLeast(0L),
+        "createdAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+
+    fun toUpdateMap(): Map<String, Any> = mapOf(
+        "businessName" to businessName.trim().take(120),
+        "isInitialized" to isInitialized,
+        "openingCash" to openingCash.coerceIn(-1000000000.0, 1000000000.0),
+        "currentCash" to currentCash.coerceIn(-1000000000.0, 1000000000.0),
+        "totalCapitalAdded" to totalCapitalAdded.coerceIn(0.0, 1000000000.0),
+        "startedAtMillis" to startedAtMillis.coerceAtLeast(0L),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+}
+
+@IgnoreExtraProperties
+data class BusinessLedgerEntry(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val entryType: String = "expense", // opening_balance, capital_add, expense, restock_deduction, sale_inflow, debtor_payment, creditor_payment
+    val title: String = "",
+    val category: String = "General",
+    val amount: Double = 0.0,
+    val balanceAfter: Double = 0.0,
+    val relatedItemId: String = "",
+    val occurredAtMillis: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    fun toCreateMap(uid: String): Map<String, Any> = mapOf(
+        "userId" to uid,
+        "entryType" to entryType,
+        "title" to title.trim().take(140),
+        "category" to category.trim().take(60),
+        "amount" to amount.coerceIn(0.0, 1000000000.0),
+        "balanceAfter" to balanceAfter.coerceIn(-1000000000.0, 1000000000.0),
+        "relatedItemId" to relatedItemId.take(128),
+        "occurredAtMillis" to occurredAtMillis.coerceAtLeast(0L),
+        "createdAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+}
+
+@IgnoreExtraProperties
+data class BusinessDebtRecord(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val personName: String = "",
+    val phone: String = "",
+    val debtType: String = "debtor", // "debtor" (owes business) or "creditor" (business owes)
+    val totalAmount: Double = 0.0,
+    val settledAmount: Double = 0.0,
+    val note: String = "",
+    @field:PropertyName("isSettled") @get:PropertyName("isSettled")
+    val isSettled: Boolean = false,
+    val dueAtMillis: Long = 0L,
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
+) {
+    val remainingAmount: Double
+        get() = if (isSettled) 0.0 else (totalAmount - settledAmount).coerceAtLeast(0.0)
+
+    fun toCreateMap(uid: String): Map<String, Any> = mapOf(
+        "userId" to uid,
+        "personName" to personName.trim().take(100),
+        "phone" to phone.trim().take(30),
+        "debtType" to if (debtType == "creditor") "creditor" else "debtor",
+        "totalAmount" to totalAmount.coerceIn(0.0, 1000000000.0),
+        "settledAmount" to settledAmount.coerceIn(0.0, 1000000000.0),
+        "note" to note.trim().take(400),
+        "isSettled" to isSettled,
+        "dueAtMillis" to dueAtMillis.coerceAtLeast(0L),
+        "createdAt" to FieldValue.serverTimestamp(),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+
+    fun toUpdateMap(): Map<String, Any> = mapOf(
+        "personName" to personName.trim().take(100),
+        "phone" to phone.trim().take(30),
+        "debtType" to if (debtType == "creditor") "creditor" else "debtor",
+        "totalAmount" to totalAmount.coerceIn(0.0, 1000000000.0),
+        "settledAmount" to settledAmount.coerceIn(0.0, 1000000000.0),
+        "note" to note.trim().take(400),
+        "isSettled" to isSettled,
+        "dueAtMillis" to dueAtMillis.coerceAtLeast(0L),
+        "updatedAt" to FieldValue.serverTimestamp()
+    )
+}
+
+data class BusinessFinancialSummary(
+    val currentCash: Double = 0.0,
+    val openingCash: Double = 0.0,
+    val totalCapitalAdded: Double = 0.0,
+    val totalInvestedCapital: Double = 0.0,
+    val stockCostValue: Double = 0.0,
+    val stockRetailValue: Double = 0.0,
+    val totalDebtors: Double = 0.0,
+    val totalCreditors: Double = 0.0,
+    val businessWorth: Double = 0.0,
+    val realizedGrossProfit: Double = 0.0,
+    val totalExpenses: Double = 0.0,
+    val totalRestockSpend: Double = 0.0,
+    val netProfitOrLoss: Double = 0.0,
+    val worthDeltaVsCapital: Double = 0.0,
+    val isMakingLoss: Boolean = false,
+    val showLoanWarning: Boolean = false
+)
+
+fun computeBusinessFinancialSummary(
+    account: BusinessAccountConfig,
+    inventory: List<InventoryItem>,
+    ledger: List<BusinessLedgerEntry>,
+    debts: List<BusinessDebtRecord>
+): BusinessFinancialSummary {
+    val stockCost = inventory.sumOf { it.totalValuation }
+    val stockRetail = inventory.sumOf { it.retailValuation }
+    val debtors = debts.filter { it.debtType == "debtor" && !it.isSettled }.sumOf { it.remainingAmount }
+    val creditors = debts.filter { it.debtType == "creditor" && !it.isSettled }.sumOf { it.remainingAmount }
+    val currentCash = account.currentCash
+    val businessWorth = currentCash + stockCost + debtors - creditors
+    val totalInvested = if (account.isInitialized) (account.openingCash + account.totalCapitalAdded) else 0.0
+    val realizedGrossProfit = inventory.sumOf { it.grossProfit }
+    val totalExpenses = ledger.filter { it.entryType == "expense" }.sumOf { it.amount }
+    val totalRestock = ledger.filter { it.entryType == "restock_deduction" }.sumOf { it.amount }
+    val netOperatingProfit = realizedGrossProfit - totalExpenses
+    val worthDelta = businessWorth - totalInvested
+    val effectiveNet = if (realizedGrossProfit != 0.0 || totalExpenses != 0.0) netOperatingProfit else worthDelta
+    val makingLoss = effectiveNet < 0.0 || worthDelta < -0.01
+    val loanWarning = debtors > 0.0 && debtors > currentCash.coerceAtLeast(0.0)
+
+    return BusinessFinancialSummary(
+        currentCash = currentCash,
+        openingCash = account.openingCash,
+        totalCapitalAdded = account.totalCapitalAdded,
+        totalInvestedCapital = totalInvested,
+        stockCostValue = stockCost,
+        stockRetailValue = stockRetail,
+        totalDebtors = debtors,
+        totalCreditors = creditors,
+        businessWorth = businessWorth,
+        realizedGrossProfit = realizedGrossProfit,
+        totalExpenses = totalExpenses,
+        totalRestockSpend = totalRestock,
+        netProfitOrLoss = netOperatingProfit,
+        worthDeltaVsCapital = worthDelta,
+        isMakingLoss = makingLoss,
+        showLoanWarning = loanWarning
     )
 }

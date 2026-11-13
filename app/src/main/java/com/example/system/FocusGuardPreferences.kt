@@ -61,6 +61,9 @@ class FocusGuardPreferences(context: Context) {
             )
         }
 
+        val gamesArray = JSONArray()
+        config.gamingAppPackages.forEach { pkg -> gamesArray.put(pkg) }
+
         prefs.edit()
             .putInt("bed_h", config.bedtimeHour.toInt())
             .putInt("bed_m", config.bedtimeMinute.toInt())
@@ -68,11 +71,50 @@ class FocusGuardPreferences(context: Context) {
             .putInt("wake_m", config.wakeMinute.toInt())
             .putBoolean("sleep_lock", config.sleepLockEnabled)
             .putLong("deep_until", config.deepWorkActiveUntilMs)
+            .putBoolean("gaming_mode_enabled", config.gamingModeEnabled)
+            .putBoolean("gaming_auto_decline_calls", config.gamingAutoDeclineCalls)
+            .putString("gaming_pkgs_json", gamesArray.toString())
             .putInt("inactivity_hours", config.inactivityAlertHours.toInt())
             .putBoolean("inactivity_fullscreen", config.inactivityFullScreenAlarm)
             .putString("rules_json", rulesArray.toString())
             .putString("sites_json", sitesArray.toString())
             .apply()
+    }
+
+    fun recordForegroundPackage(pkg: String) {
+        val raw = prefs.getString("gaming_pkgs_json", "[]") ?: "[]"
+        val arr = try {
+            JSONArray(raw)
+        } catch (_: Exception) {
+            JSONArray()
+        }
+        val configuredGames = HashSet<String>()
+        for (i in 0 until arr.length()) {
+            val p = arr.optString(i).trim()
+            if (p.isNotEmpty()) configuredGames.add(p)
+        }
+        val lower = pkg.lowercase()
+        val isCallUi = lower.contains("dialer") || lower.contains("incallui") ||
+            lower.contains("telecom") || lower == "com.android.systemui"
+        if (pkg in configuredGames) {
+            prefs.edit()
+                .putString("active_game_pkg", pkg)
+                .putLong("active_game_seen_ms", System.currentTimeMillis())
+                .apply()
+        } else if (!isCallUi) {
+            prefs.edit()
+                .putString("active_game_pkg", "")
+                .putLong("active_game_seen_ms", 0L)
+                .apply()
+        }
+    }
+
+    fun isGamingCallBlockActive(): Boolean {
+        val autoDecline = prefs.getBoolean("gaming_auto_decline_calls", true)
+        if (!autoDecline) return false
+        if (prefs.getBoolean("gaming_mode_enabled", false)) return true
+        val seenMs = prefs.getLong("active_game_seen_ms", 0L)
+        return seenMs > 0L && (System.currentTimeMillis() - seenMs) <= 120_000L
     }
 
     fun touchUserActivity() {

@@ -89,6 +89,15 @@
                 android:resource="@xml/focus_guard_service_config" />
         </service>
 
+        <service
+            android:name=".system.GamingCallScreeningService"
+            android:exported="true"
+            android:permission="android.permission.BIND_SCREENING_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.CallScreeningService" />
+            </intent-filter>
+        </service>
+
         <receiver
             android:name=".system.SleepAlarmReceiver"
             android:exported="false">

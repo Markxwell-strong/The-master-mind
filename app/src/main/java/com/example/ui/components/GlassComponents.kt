@@ -9,6 +9,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,6 +25,8 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -298,17 +301,39 @@ fun GlassNavigationBar(
             shadowElevation = 8.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
-                modifier = Modifier
+            val useScroll = destinations.size > 5
+            val rowModifier = if (useScroll) {
+                Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
+            }
+            Row(
+                modifier = rowModifier,
+                horizontalArrangement = if (useScroll) Arrangement.spacedBy(4.dp) else Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 destinations.forEach { dest ->
                     val selected = activeRoute == dest.route
-                    Column(
-                        modifier = Modifier
+                    val itemModifier = if (useScroll) {
+                        Modifier
+                            .widthIn(min = 66.dp)
+                            .minimumInteractiveComponentSize()
+                            .heightIn(min = 52.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(
+                                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.20f)
+                                else Color.Transparent
+                            )
+                            .clickable { onSelect(dest) }
+                            .padding(horizontal = 8.dp, vertical = 5.dp)
+                            .testTag("nav_${dest.route}")
+                    } else {
+                        Modifier
                             .weight(1f)
                             .minimumInteractiveComponentSize()
                             .heightIn(min = 52.dp)
@@ -319,7 +344,10 @@ fun GlassNavigationBar(
                             )
                             .clickable { onSelect(dest) }
                             .padding(vertical = 5.dp)
-                            .testTag("nav_${dest.route}"),
+                            .testTag("nav_${dest.route}")
+                    }
+                    Column(
+                        modifier = itemModifier,
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
